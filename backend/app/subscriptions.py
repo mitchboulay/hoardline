@@ -12,38 +12,43 @@ CHECK_INTERVAL = 300  # how often the loop wakes to see if any sub is due
 MAX_NEW_PER_CHECK = 10
 
 
-def _latest_entries(url: str) -> list[dict]:
+MAX_BACKFILL = 200
+
+
+def _latest_entries(url: str, limit: int = MAX_NEW_PER_CHECK) -> list[dict]:
     opts = {"quiet": True, "no_warnings": True, "extract_flat": True,
-            "playlist_items": f"1-{MAX_NEW_PER_CHECK}", **ytdlp_svc.cookie_opts()}
+            "playlist_items": f"1-{limit}", **ytdlp_svc.cookie_opts()}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return list(info.get("entries") or [])
 
 
-def check_subscription(sub_id: int, bootstrap: bool = False) -> int:
+def check_subscription(sub_id: int, bootstrap: bool = False, backfill: int = 0) -> int:
     """Check one subscription now. Returns number of new downloads queued.
-    On first check (bootstrap) existing uploads are marked seen, not downloaded —
-    subscribing shouldn't trigger a backfill of the whole channel."""
+    On first check (bootstrap) existing uploads are marked seen rather than
+    downloaded — except the newest `backfill` videos, which are queued."""
     sub = db.query_one("SELECT * FROM subscriptions WHERE id = ?", (sub_id,))
     if sub is None:
         raise ValueError("Unknown subscription")
-    entries = _latest_entries(sub["url"])
+    backfill = max(0, min(MAX_BACKFILL, backfill))
+    entries = _latest_entries(sub["url"], limit=max(MAX_NEW_PER_CHECK, backfill))
     first_check = bootstrap or not db.query_one("SELECT 1 FROM sub_seen WHERE sub_id = ?", (sub_id,))
     queued = 0
-    for entry in entries:
+    for index, entry in enumerate(entries):  # entries arrive newest-first
         vid = entry.get("id") or entry.get("url")
         if not vid:
             continue
         if db.query_one("SELECT 1 FROM sub_seen WHERE sub_id = ? AND video_id = ?", (sub_id, vid)):
             continue
         db.execute("INSERT OR IGNORE INTO sub_seen (sub_id, video_id) VALUES (?, ?)", (sub_id, vid))
-        if first_check:
+        if first_check and index >= backfill:
             continue
         jobs.enqueue(
             url=entry.get("url") or f"https://www.youtube.com/watch?v={vid}",
             recipe_id=sub["recipe_id"],
             location_id=sub["location_id"],
             title=entry.get("title") or "",
+            uploader=entry.get("uploader") or entry.get("channel") or sub["name"],
         )
         queued += 1
     db.execute("UPDATE subscriptions SET last_checked = datetime('now') WHERE id = ?", (sub_id,))

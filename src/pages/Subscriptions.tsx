@@ -7,15 +7,25 @@ import { Field } from './Login'
 
 const FREQS = ['hourly', 'every 6 hours', 'daily', 'weekly']
 
+const BACKFILL_OPTIONS: [number, string][] = [
+  [0, 'New uploads only'],
+  [5, 'Also grab the last 5 videos'],
+  [10, 'Also grab the last 10 videos'],
+  [25, 'Also grab the last 25 videos'],
+  [200, 'Backfill everything (up to 200)'],
+]
+
 function AddSubscriptionDialog({ onClose }: { onClose: () => void }) {
   const recipes = useStore((s) => s.recipes)
   const locations = useStore((s) => s.locations)
+  const settings = useStore((s) => s.settings)
   const addSubscription = useStore((s) => s.addSubscription)
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [freq, setFreq] = useState('daily')
   const [recipeId, setRecipeId] = useState('universal')
-  const [locationId, setLocationId] = useState(locations[0]?.id ?? 0)
+  const [locationId, setLocationId] = useState(settings?.default_location_id ?? locations[0]?.id ?? 0)
+  const [backfill, setBackfill] = useState(0)
   const [busy, setBusy] = useState(false)
 
   const selectStyle = { width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '10px 11px', fontSize: 13.5, outline: 'none' } as const
@@ -23,7 +33,7 @@ function AddSubscriptionDialog({ onClose }: { onClose: () => void }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
-    const ok = await addSubscription({ name, url, freq, recipe_id: recipeId, location_id: locationId })
+    const ok = await addSubscription({ name, url, freq, recipe_id: recipeId, location_id: locationId, backfill })
     setBusy(false)
     if (ok) onClose()
   }
@@ -55,12 +65,20 @@ function AddSubscriptionDialog({ onClose }: { onClose: () => void }) {
             </select>
           </label>
         </div>
-        <label style={{ display: 'block', marginBottom: 20 }}>
-          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Save to</span>
-          <select value={locationId} onChange={(e) => setLocationId(Number(e.target.value))} style={selectStyle}>
-            {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+          <label>
+            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Save to</span>
+            <select value={locationId} onChange={(e) => setLocationId(Number(e.target.value))} style={selectStyle}>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Catch up on older videos?</span>
+            <select value={backfill} onChange={(e) => setBackfill(Number(e.target.value))} style={selectStyle}>
+              {BACKFILL_OPTIONS.map(([n, label]) => <option key={n} value={n}>{label}</option>)}
+            </select>
+          </label>
+        </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>
             Cancel

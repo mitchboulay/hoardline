@@ -191,6 +191,7 @@ export default function Settings() {
   const settings = useStore((s) => s.settings)
   const saveSettings = useStore((s) => s.saveSettings)
   const recipes = useStore((s) => s.recipes)
+  const locations = useStore((s) => s.locations)
   const loadSettings = useStore((s) => s.loadSettings)
 
   useEffect(() => {
@@ -237,6 +238,19 @@ export default function Settings() {
         <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', fontSize: 14.5, fontWeight: 600 }}>
           Downloads
         </div>
+        <Row name="Default save location" desc="Pre-selected destination for downloads and conversions.">
+          <select
+            value={settings?.default_location_id ?? ''}
+            onChange={(e) => void saveSettings({ default_location_id: e.target.value ? Number(e.target.value) : null })}
+            style={selectStyle}
+            aria-label="Default save location"
+          >
+            <option value="">First location</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </select>
+        </Row>
         <Row name="Default recipe" desc="Pre-selected after every analyze.">
           <select
             value={settings?.default_recipe ?? 'universal'}

@@ -103,7 +103,8 @@ interface State {
   toggleAdvanced: () => void
   setAdvChoice: (key: string, value: string) => void
   setLocation: (id: number) => void
-  download: () => Promise<boolean>
+  effectiveLocationId: () => number | undefined
+  download: (startPaused?: boolean) => Promise<boolean>
 
   // queue / library actions
   queueFilter: QueueFilter
@@ -117,7 +118,7 @@ interface State {
   deleteLocation: (id: number) => void
 
   // subscription actions
-  addSubscription: (body: { name: string; url: string; freq: string; recipe_id: string; location_id: number }) => Promise<boolean>
+  addSubscription: (body: { name: string; url: string; freq: string; recipe_id: string; location_id: number; backfill: number }) => Promise<boolean>
   toggleSubscription: (id: number, enabled: boolean) => Promise<void>
   deleteSubscription: (id: number) => void
   checkSubscription: (id: number) => Promise<void>
@@ -268,11 +269,18 @@ export const useStore = create<State>((set, get) => {
     toggleAdvanced: () => set((s) => ({ showAdvanced: !s.showAdvanced })),
     setAdvChoice: (key, value) => set((s) => ({ advChoices: { ...s.advChoices, [key]: value } })),
     setLocation: (id) => set({ selectedLocationId: id }),
-    download: async () => {
-      const { analysis, selectedIntent, selectedLocationId, locations, advChoices,
+    effectiveLocationId: () => {
+      const { selectedLocationId, settings, locations } = get()
+      const preferred = settings?.default_location_id
+      return selectedLocationId
+        ?? (preferred && locations.some((l) => l.id === preferred) ? preferred : undefined)
+        ?? locations[0]?.id
+    },
+    download: async (startPaused = false) => {
+      const { analysis, selectedIntent, advChoices,
               convertMode, convertProfileId, convertRetention } = get()
       if (!analysis) return false
-      const locationId = selectedLocationId ?? locations[0]?.id
+      const locationId = get().effectiveLocationId()
       if (!locationId) {
         get().showToast('Add a storage location first', 'warn')
         return false
@@ -283,15 +291,19 @@ export const useStore = create<State>((set, get) => {
           recipe_id: selectedIntent,
           location_id: locationId,
           title: analysis.title,
+          uploader: analysis.uploader,
           thumbnail: analysis.thumbnail,
           overrides: advChoices,
           convert: convertMode === 'none'
             ? null
             : { mode: convertMode, profile_id: convertProfileId, retention: convertRetention },
+          start_paused: startPaused,
         })
         const name = analysis.intents.find((i) => i.id === selectedIntent)?.name ?? selectedIntent
         set({ url: '', analysis: null, showAdvanced: false, advChoices: {} })
-        get().showToast(`Added to queue — "${name}"`)
+        get().showToast(startPaused
+          ? `Queued (paused) — "${name}". Resume it from the queue whenever you're ready.`
+          : `Added to queue — "${name}"`)
         void get().loadJobs()
         return true
       } catch (e) {
@@ -385,9 +397,11 @@ export const useStore = create<State>((set, get) => {
 
     addSubscription: async (body) => {
       try {
-        await api.post('/api/subscriptions', body)
-        await get().loadSubs()
-        get().showToast(`Subscribed to "${body.name}" — new uploads download automatically`)
+        const resp = await api.post<{ backfilled: number }>('/api/subscriptions', body)
+        await Promise.all([get().loadSubs(), get().loadJobs()])
+        get().showToast(resp.backfilled
+          ? `Subscribed to "${body.name}" — queued ${resp.backfilled} older video(s), new uploads follow automatically`
+          : `Subscribed to "${body.name}" — new uploads download automatically`)
         return true
       } catch (e) {
         toastError(e)

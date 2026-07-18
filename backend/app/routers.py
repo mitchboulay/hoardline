@@ -128,9 +128,11 @@ class JobBody(BaseModel):
     recipe_id: str
     location_id: int
     title: str = ""
+    uploader: str = ""
     thumbnail: str | None = None
     overrides: dict[str, str] = {}
     convert: ConvertOptions | None = None
+    start_paused: bool = False
 
 
 @api.post("/jobs")
@@ -138,7 +140,8 @@ def create_job(body: JobBody):
     try:
         job_id = jobs.enqueue(body.url, body.recipe_id, body.location_id,
                               body.title, body.thumbnail, body.overrides,
-                              convert=body.convert.model_dump() if body.convert else None)
+                              convert=body.convert.model_dump() if body.convert else None,
+                              uploader=body.uploader, start_paused=body.start_paused)
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     return db.query_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
@@ -311,6 +314,7 @@ class ConvertBody(BaseModel):
     out_subdir: str = "converted"
     retention: str = "keep"
     move_subdir: str = "originals"
+    start_paused: bool = False
 
 
 @api.post("/convert")
@@ -321,7 +325,8 @@ def create_conversions(body: ConvertBody):
             created.append(jobs.enqueue_conversion(
                 src_location_id=body.location_id, src_path=item.path, src_size=item.size,
                 profile_id=body.profile_id, out_location_id=body.out_location_id,
-                out_subdir=body.out_subdir, retention=body.retention, move_subdir=body.move_subdir))
+                out_subdir=body.out_subdir, retention=body.retention, move_subdir=body.move_subdir,
+                start_paused=body.start_paused))
         except (ValueError, KeyError) as e:
             errors.append({"path": item.path, "error": str(e)})
     if not created and errors:
@@ -516,6 +521,7 @@ class SubscriptionBody(BaseModel):
     freq: str = "daily"
     recipe_id: str = "universal"
     location_id: int
+    backfill: int = Field(default=0, ge=0, le=200)
 
 
 @api.get("/subscriptions")
@@ -537,11 +543,11 @@ async def create_subscription(body: SubscriptionBody):
         (body.name, body.url, sub_type, body.freq, body.recipe_id, body.location_id),
     )
     try:
-        await asyncio.to_thread(subscriptions.check_subscription, sub_id, True)
+        queued = await asyncio.to_thread(subscriptions.check_subscription, sub_id, True, body.backfill)
     except Exception as e:
         db.execute("DELETE FROM subscriptions WHERE id = ?", (sub_id,))
         raise HTTPException(status_code=422, detail=ytdlp_svc.humanize_error(e))
-    return db.query_one("SELECT * FROM subscriptions WHERE id = ?", (sub_id,))
+    return {**db.query_one("SELECT * FROM subscriptions WHERE id = ?", (sub_id,)), "backfilled": queued}
 
 
 @api.patch("/subscriptions/{sub_id}")
@@ -573,7 +579,7 @@ async def check_now(sub_id: int):
 MUTABLE_SETTINGS = {"default_recipe", "concurrent_downloads", "notifications",
                     "sso_enabled", "sso_issuer", "sso_client_id", "sso_client_secret",
                     "policy_delete_old", "policy_keep_recent", "policy_low_disk_warn",
-                    "cookies_txt"}
+                    "cookies_txt", "default_location_id"}
 MASKED = "•••••"
 
 

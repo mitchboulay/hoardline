@@ -288,4 +288,5 @@ export interface Settings {
   policy_keep_recent: boolean
   policy_low_disk_warn: boolean
   cookies_txt: string
+  default_location_id: number | null
 }

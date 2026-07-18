@@ -21,7 +21,12 @@ export default function Convert() {
   const nav = useNavigate()
   const locations = useStore((s) => s.locations)
   const profiles = useStore((s) => s.profiles)
+  const settings = useStore((s) => s.settings)
   const showToast = useStore((s) => s.showToast)
+  const defaultLocationId =
+    settings?.default_location_id && locations.some((l) => l.id === settings.default_location_id)
+      ? settings.default_location_id
+      : locations[0]?.id
 
   const [locationId, setLocationId] = useState<number | null>(null)
   const [path, setPath] = useState('')
@@ -34,10 +39,11 @@ export default function Convert() {
   const [outLocationId, setOutLocationId] = useState<number | null>(null)
   const [outSubdir, setOutSubdir] = useState('converted')
   const [retention, setRetention] = useState<'keep' | 'move' | 'delete'>('keep')
+  const [startPaused, setStartPaused] = useState(false)
   const [plan, setPlan] = useState<ConvertPlan | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const curLocation = locations.find((l) => l.id === (locationId ?? locations[0]?.id))
+  const curLocation = locations.find((l) => l.id === (locationId ?? defaultLocationId))
   const availableProfiles = profiles.filter((p) => p.available)
   const profile = profiles.find((p) => p.id === (profileId || availableProfiles[0]?.id))
 
@@ -100,9 +106,10 @@ export default function Convert() {
           location_id: curLocation.id,
           items: [...selected.values()].map((f) => ({ path: f.path, size: f.size })),
           profile_id: profile.id,
-          out_location_id: outLocationId ?? locations[0]?.id,
+          out_location_id: outLocationId ?? defaultLocationId,
           out_subdir: outSubdir.trim(),
           retention,
+          start_paused: startPaused,
         })
       if (resp.errors.length) {
         showToast(`${resp.created.length} queued, ${resp.errors.length} skipped: ${resp.errors[0].error}`, 'warn')
@@ -237,7 +244,7 @@ export default function Convert() {
               </label>
               <label>
                 <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Output location</span>
-                <select value={outLocationId ?? locations[0]?.id ?? ''} onChange={(e) => setOutLocationId(Number(e.target.value))} style={{ ...selectStyle, width: '100%' }}>
+                <select value={outLocationId ?? defaultLocationId ?? ''} onChange={(e) => setOutLocationId(Number(e.target.value))} style={{ ...selectStyle, width: '100%' }}>
                   {locations.map((l) => (
                     <option key={l.id} value={l.id}>{l.name}</option>
                   ))}
@@ -262,6 +269,10 @@ export default function Convert() {
                 {plan.explanation} Files already matching the profile are copied or remuxed instead of re-encoded.
               </div>
             )}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13, color: 'var(--muted)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={startPaused} onChange={(e) => setStartPaused(e.target.checked)} />
+              Add paused — jobs wait in the queue until you resume them
+            </label>
             {validation.map((v) => (
               <div key={v} style={{ fontSize: 12.5, color: 'var(--red)', display: 'flex', gap: 7, alignItems: 'center' }}>
                 <Ic.warn width={13} height={13} />

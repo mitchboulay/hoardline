@@ -85,8 +85,10 @@ def get_recipe(recipe_id: str) -> dict[str, Any]:
 def build_ydl_opts(recipe_id: str, overrides: dict[str, str] | None = None) -> dict[str, Any]:
     """Translate a recipe (+ advanced overrides) into yt-dlp options."""
     overrides = overrides or {}
+    # Flat title-only names: downloads land in a per-channel folder
+    # ({channel}/{title}.ext), so the filename itself stays clean.
     opts: dict[str, Any] = {
-        "outtmpl": "%(title)s [%(height)sp].%(ext)s",
+        "outtmpl": "%(title)s.%(ext)s",
         "restrictfilenames": False,
         "noplaylist": True,
         "postprocessors": [],
@@ -96,7 +98,6 @@ def build_ydl_opts(recipe_id: str, overrides: dict[str, str] | None = None) -> d
         opts.update({
             "format": "bestvideo+bestaudio/best",
             "merge_output_format": "mkv",
-            "outtmpl": "%(uploader)s - %(title)s.%(ext)s",
             "writesubtitles": True, "subtitleslangs": ["all"],
             "postprocessors": [
                 {"key": "FFmpegEmbedSubtitle"},

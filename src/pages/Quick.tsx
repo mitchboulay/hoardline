@@ -95,17 +95,19 @@ export default function Quick() {
   const advChoices = useStore((s) => s.advChoices)
   const setAdvChoice = useStore((s) => s.setAdvChoice)
   const locations = useStore((s) => s.locations)
-  const selectedLocationId = useStore((s) => s.selectedLocationId)
   const setLocation = useStore((s) => s.setLocation)
   const download = useStore((s) => s.download)
 
+  const effectiveLocationId = useStore((s) => s.effectiveLocationId)
+
   const sel = analysis?.intents.find((i) => i.id === selectedIntent) ?? analysis?.intents[0]
-  const locationId = selectedLocationId ?? locations[0]?.id
+  const locationId = effectiveLocationId()
   const location = locations.find((l) => l.id === locationId)
+  const channel = analysis?.uploader?.replace(/^📺\s*/, '') ?? '{channel}'
   const destDisplay = location
     ? location.type === 'local'
-      ? `Local storage · /downloads/${sel?.subdir ?? ''}`
-      : `${location.name} · //${location.host}/${location.share}${location.subpath ? '/' + location.subpath : ''}/${sel?.subdir ?? ''}`
+      ? `Local storage · /downloads/${channel}/`
+      : `${location.name} · //${location.host}/${location.share}${location.subpath ? '/' + location.subpath : ''}/${channel}/`
     : 'No storage location'
 
   return (
@@ -320,14 +322,24 @@ export default function Quick() {
               </button>
             )}
           </div>
-          <button
-            onClick={() => void download().then((ok) => ok && nav('/queue'))}
-            className="btn-primary"
-            style={{ width: '100%', marginTop: 12, padding: 15, borderRadius: 12, fontSize: 15, fontWeight: 700, justifyContent: 'center', gap: 9, boxShadow: '0 8px 22px var(--accent-soft)' }}
-          >
-            <Ic.down width={18} height={18} strokeWidth={2.2} />
-            Download · {sel.name}{sel.est_size_str !== '—' ? ` · ~${sel.est_size_str}` : ''}
-          </button>
+          <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+            <button
+              onClick={() => void download(true)}
+              title="Adds this download to the queue paused — nothing starts until you resume it"
+              style={{ flex: 1, padding: 15, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            >
+              <Ic.pause width={15} height={15} />
+              Add to queue
+            </button>
+            <button
+              onClick={() => void download().then((ok) => ok && nav('/queue'))}
+              className="btn-primary"
+              style={{ flex: 2, padding: 15, borderRadius: 12, fontSize: 15, fontWeight: 700, justifyContent: 'center', gap: 9, boxShadow: '0 8px 22px var(--accent-soft)' }}
+            >
+              <Ic.down width={18} height={18} strokeWidth={2.2} />
+              Download now · {sel.name}{sel.est_size_str !== '—' ? ` · ~${sel.est_size_str}` : ''}
+            </button>
+          </div>
         </div>
       )}
     </div>

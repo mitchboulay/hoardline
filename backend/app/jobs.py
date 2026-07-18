@@ -5,6 +5,7 @@ polls). Cancel/pause set a flag both yt-dlp hooks and the HandBrake watcher
 honor. Sources are never overwritten: conversions encode to scratch, verify
 with ffprobe, then move into place before retention runs."""
 import json
+import re
 import shutil
 import threading
 import time
@@ -37,10 +38,18 @@ def _log(job_id: int, line: str) -> None:
 
 # ------------------------------------------------------------------ enqueue
 
+def safe_dirname(name: str) -> str:
+    """Channel names become directory names; strip filesystem-hostile chars."""
+    cleaned = re.sub(r'[\\/:*?"<>|]', "", name or "").strip().strip(".")
+    return cleaned[:80] or "Unknown"
+
+
 def enqueue(url: str, recipe_id: str, location_id: int, title: str = "",
             thumbnail: str | None = None, overrides: dict | None = None,
-            convert: dict | None = None) -> int:
-    """Queue a download, optionally chained into a conversion."""
+            convert: dict | None = None, uploader: str = "",
+            start_paused: bool = False) -> int:
+    """Queue a download, optionally chained into a conversion. Output lands in
+    {location}/{channel}/{title}.ext."""
     recipe = recipes.get_recipe(recipe_id)
     loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (location_id,))
     if loc is None:
@@ -53,20 +62,22 @@ def enqueue(url: str, recipe_id: str, location_id: int, title: str = "",
         if not profile["available"]:
             raise ValueError(f'Profile "{profile["name"]}" uses an encoder this server doesn\'t have.')
         profile_id, profile_name = profile["id"], profile["name"]
+    channel = safe_dirname(uploader) if uploader else "{channel}"
+    status = "paused" if start_paused else "queued"
     return db.execute(
         "INSERT INTO jobs (kind, url, title, thumbnail, recipe_id, recipe_name, res, location_id, "
-        "dest_display, overrides, stage, convert_mode, profile_id, profile_name, retention) "
-        "VALUES ('download', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
+        "dest_display, overrides, status, stage, convert_mode, profile_id, profile_name, retention) "
+        "VALUES ('download', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (url, title or url, thumbnail, recipe_id, recipe["name"], recipe["res"],
-         location_id, _dest_display(loc, recipe["subdir"]), json.dumps(overrides or {}),
-         convert_mode, profile_id, profile_name,
+         location_id, _dest_display(loc, channel), json.dumps(overrides or {}),
+         status, status, convert_mode, profile_id, profile_name,
          "delete" if convert.get("retention") == "delete" else "keep"),
     )
 
 
 def enqueue_conversion(src_location_id: int, src_path: str, src_size: int, profile_id: str,
                        out_location_id: int, out_subdir: str, retention: str,
-                       move_subdir: str = "originals") -> int:
+                       move_subdir: str = "originals", start_paused: bool = False) -> int:
     profile = handbrake.get_profile(profile_id)
     if not profile["available"]:
         raise ValueError(f'Profile "{profile["name"]}" uses an encoder this server doesn\'t have.')
@@ -79,12 +90,13 @@ def enqueue_conversion(src_location_id: int, src_path: str, src_size: int, profi
     if retention not in ("keep", "move", "delete"):
         raise ValueError("Retention must be keep, move or delete.")
     name = src_path.split("/")[-1]
+    status = "paused" if start_paused else "queued"
     return db.execute(
-        "INSERT INTO jobs (kind, url, title, recipe_id, recipe_name, stage, src_location_id, src_path, "
-        "src_size, profile_id, profile_name, out_location_id, out_subdir, retention, move_subdir, "
-        "location_id, dest_display, est_temp_bytes) "
-        "VALUES ('convert', '', ?, '', '', 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, src_location_id, src_path, src_size, profile["id"], profile["name"],
+        "INSERT INTO jobs (kind, url, title, recipe_id, recipe_name, status, stage, src_location_id, "
+        "src_path, src_size, profile_id, profile_name, out_location_id, out_subdir, retention, "
+        "move_subdir, location_id, dest_display, est_temp_bytes) "
+        "VALUES ('convert', '', ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, status, status, src_location_id, src_path, src_size, profile["id"], profile["name"],
          out_location_id, out_subdir.strip("/"), retention, move_subdir.strip("/") or "originals",
          out_location_id, _dest_display(out_loc, out_subdir.strip("/")),
          int(src_size * 2.2)),  # source copy in scratch + encoded output headroom
@@ -220,7 +232,11 @@ def _run_download(job: dict) -> None:
     height = info.get("height")
     res = f"{height}p" if height else recipe["res"]
     title = info.get("title") or job["title"]
-    _update(job_id, title=title, res=res, src_size=media.stat().st_size)
+    # Everything lands in {location}/{channel}/{title}.ext
+    channel_dir = safe_dirname(info.get("uploader") or info.get("channel") or "")
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (job["location_id"],))
+    _update(job_id, title=title, res=res, src_size=media.stat().st_size,
+            dest_display=_dest_display(loc, channel_dir))
 
     outputs = [media]
     if job["convert_mode"]:
@@ -230,10 +246,9 @@ def _run_download(job: dict) -> None:
 
     _check_stop(job_id)
     _update(job_id, stage="moving", speed="—", eta="—")
-    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (job["location_id"],))
     for out_file in outputs:
         size = out_file.stat().st_size
-        remote_path, _ = storage.store_file(loc, out_file, recipe["subdir"])
+        remote_path, _ = storage.store_file(loc, out_file, channel_dir)
         db.execute(
             "INSERT INTO library (title, uploader, duration_str, recipe_name, res, size_bytes, "
             "remote_path, location_id, thumbnail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
