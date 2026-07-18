@@ -60,6 +60,7 @@ async def tool_start_download(args: dict) -> Any:
     default_recipe, default_location = _defaults()
     recipe_id = args.get("recipe_id") or default_recipe
     location_id = int(args.get("location_id") or default_location)
+    overrides = args.get("overrides") or {}
     convert = None
     if args.get("convert_profile_id"):
         convert = {"mode": args.get("convert_mode") or "when_needed",
@@ -70,12 +71,13 @@ async def tool_start_download(args: dict) -> Any:
     if ytdlp_svc.looks_like_playlist(url):
         entries = await asyncio.to_thread(ytdlp_svc.playlist_entries_sync, url)
         if len(entries) > 1:
-            ids = [jobs.enqueue(e["url"], recipe_id, location_id, title=e["title"],
+            ids = [jobs.enqueue(e["url"], recipe_id, location_id, title=e["title"], overrides=overrides,
                                 uploader=e["uploader"], convert=convert, start_paused=start_paused)
                    for e in entries]
             return {"playlist": True, "queued": len(ids), "job_ids": ids,
                     "note": "One job per video; watch progress with list_jobs."}
-    job_id = jobs.enqueue(url, recipe_id, location_id, convert=convert, start_paused=start_paused)
+    job_id = jobs.enqueue(url, recipe_id, location_id, overrides=overrides,
+                          convert=convert, start_paused=start_paused)
     return db.query_one("SELECT id, title, status, recipe_name, dest_display FROM jobs WHERE id = ?", (job_id,))
 
 
@@ -94,11 +96,15 @@ async def tool_list_jobs(args: dict) -> Any:
 
 async def tool_control_job(args: dict) -> Any:
     action = args["action"]
+    job_id = int(args["job_id"])
+    if action in ("move_up", "move_down"):
+        jobs.move(job_id, "up" if action == "move_up" else "down")
+        return {"ok": True, "job_id": job_id, "action": action}
     handlers = {"pause": jobs.pause, "resume": jobs.resume, "retry": jobs.retry, "cancel": jobs.cancel}
     if action not in handlers:
-        raise ValueError(f"Unknown action: {action}. Use pause, resume, retry or cancel.")
-    handlers[action](int(args["job_id"]))
-    return {"ok": True, "job_id": args["job_id"], "action": action}
+        raise ValueError(f"Unknown action: {action}.")
+    handlers[action](job_id)
+    return {"ok": True, "job_id": job_id, "action": action}
 
 
 async def tool_clear_finished_jobs(args: dict) -> Any:
@@ -135,19 +141,37 @@ async def tool_list_files(args: dict) -> Any:
 
 async def tool_start_conversion(args: dict) -> Any:
     _, default_location = _defaults()
-    out_location = int(args.get("out_location_id") or args["location_id"] or default_location)
+    src_location_id = int(args["location_id"])
+    out_location = int(args.get("out_location_id") or src_location_id or default_location)
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (src_location_id,))
+    if loc is None:
+        raise ValueError("Unknown storage location — call get_options for valid ids.")
+    # Resolve real sizes (for temp-space estimates) with one listing per folder.
+    sizes: dict[str, int] = {}
+    parents = {"/".join(p.split("/")[:-1]) for p in args["paths"]}
+    for parent in parents:
+        try:
+            listing = await asyncio.to_thread(storage.list_dir, loc, parent)
+            for f in listing["files"]:
+                sizes[f"{parent}/{f['name']}".strip("/")] = f["size"]
+        except storage.StorageError:
+            pass  # size stays 0; the job inspects properly at run time
     ids, errors = [], []
     for path in args["paths"]:
         try:
             ids.append(jobs.enqueue_conversion(
-                src_location_id=int(args["location_id"]), src_path=path, src_size=0,
+                src_location_id=src_location_id, src_path=path,
+                src_size=sizes.get(path.strip("/"), 0),
                 profile_id=args["profile_id"], out_location_id=out_location,
                 out_subdir=args.get("out_subdir") or "converted",
                 retention=args.get("retention") or "keep",
+                move_subdir=args.get("move_subdir") or "originals",
                 start_paused=bool(args.get("start_paused"))))
         except (ValueError, KeyError) as e:
             errors.append({"path": path, "error": str(e)})
-    return {"queued": len(ids), "job_ids": ids, "errors": errors}
+    est = int(sum(sizes.get(p.strip("/"), 0) for p in args["paths"]) * 2.2)
+    return {"queued": len(ids), "job_ids": ids, "errors": errors,
+            "est_temp_space": recipes.humanize_bytes(est) if est else "unknown"}
 
 
 async def tool_manage_subscriptions(args: dict) -> Any:
@@ -155,6 +179,16 @@ async def tool_manage_subscriptions(args: dict) -> Any:
     if action == "list":
         return db.query("SELECT id, name, url, type, freq, recipe_id, location_id, enabled, last_checked "
                         "FROM subscriptions ORDER BY id")
+    if action in ("enable", "disable"):
+        sub_id = int(args["subscription_id"])
+        if not db.query_one("SELECT 1 FROM subscriptions WHERE id = ?", (sub_id,)):
+            raise ValueError("Unknown subscription — use action=list for valid ids.")
+        db.execute("UPDATE subscriptions SET enabled = ? WHERE id = ?",
+                   (1 if action == "enable" else 0, sub_id))
+        return {"ok": True, "subscription_id": sub_id, "enabled": action == "enable"}
+    if action == "check":
+        queued = await asyncio.to_thread(subscriptions.check_subscription, int(args["subscription_id"]))
+        return {"queued": queued}
     if action == "add":
         default_recipe, default_location = _defaults()
         sub_type = "Playlist" if "list=" in args["url"] or "playlist" in args["url"] else "Channel"
@@ -173,6 +207,141 @@ async def tool_manage_subscriptions(args: dict) -> Any:
         db.execute("DELETE FROM subscriptions WHERE id = ?", (int(args["subscription_id"]),))
         return {"ok": True}
     raise ValueError("action must be list, add or delete")
+
+
+async def tool_delete_library_item(args: dict) -> Any:
+    item = db.query_one("SELECT * FROM library WHERE id = ?", (int(args["library_id"]),))
+    if item is None:
+        raise ValueError("Unknown library item — use search_library for valid ids.")
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (item["location_id"],))
+    storage.delete_file(loc, item["remote_path"])
+    db.execute("DELETE FROM library WHERE id = ?", (item["id"],))
+    return {"deleted": item["title"], "freed": recipes.humanize_bytes(item["size_bytes"]),
+            "path": item["remote_path"]}
+
+
+async def tool_manage_profiles(args: dict) -> Any:
+    action = args["action"]
+    if action == "list":
+        return handbrake.list_profiles()
+    if action == "create":
+        settings = handbrake.validate_settings(args.get("settings") or {})
+        pid = db.execute("INSERT INTO conversion_profiles (name, desc, settings) VALUES (?, ?, ?)",
+                         (args["name"], args.get("desc") or "", json.dumps(settings)))
+        return handbrake.get_profile(f"custom-{pid}")
+    profile_id = args.get("profile_id") or ""
+    if not profile_id.startswith("custom-"):
+        raise ValueError("Built-in profiles can't be edited or deleted — create a custom one instead.")
+    row_id = int(profile_id.removeprefix("custom-"))
+    if action == "update":
+        current = handbrake.get_profile(profile_id)
+        merged = handbrake.validate_settings({**current["settings"], **(args.get("settings") or {})})
+        db.execute("UPDATE conversion_profiles SET name = ?, desc = ?, settings = ? WHERE id = ?",
+                   (args.get("name") or current["name"], args.get("desc") or current["desc"],
+                    json.dumps(merged), row_id))
+        return handbrake.get_profile(profile_id)
+    if action == "delete":
+        in_use = db.query_one(
+            "SELECT 1 FROM jobs WHERE profile_id = ? AND status IN ('queued', 'downloading', 'paused') LIMIT 1",
+            (profile_id,))
+        if in_use:
+            raise ValueError("Jobs in the queue still use this profile.")
+        db.execute("DELETE FROM conversion_profiles WHERE id = ?", (row_id,))
+        return {"ok": True}
+    raise ValueError("action must be list, create, update or delete")
+
+
+async def tool_manage_watched_folders(args: dict) -> Any:
+    action = args["action"]
+    if action == "list":
+        folders = db.query(
+            "SELECT wf.*, sl.name AS location_name, ol.name AS out_location_name FROM watched_folders wf "
+            "LEFT JOIN storage_locations sl ON sl.id = wf.location_id "
+            "LEFT JOIN storage_locations ol ON ol.id = wf.out_location_id ORDER BY wf.id")
+        return folders
+    if action == "add":
+        _, default_location = _defaults()
+        handbrake.get_profile(args["profile_id"])  # validate
+        wf_id = db.execute(
+            "INSERT INTO watched_folders (location_id, path, profile_id, out_location_id, out_subdir, "
+            "retention, move_subdir) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (int(args.get("location_id") or default_location), (args.get("path") or "").strip("/"),
+             args["profile_id"], int(args.get("out_location_id") or args.get("location_id") or default_location),
+             (args.get("out_subdir") or "converted").strip("/"),
+             args.get("retention") or "keep", (args.get("move_subdir") or "originals").strip("/")))
+        try:
+            await asyncio.to_thread(subscriptions.scan_watched_folder, wf_id, True)
+        except Exception as e:
+            db.execute("DELETE FROM watched_folders WHERE id = ?", (wf_id,))
+            raise ValueError(f"Couldn't scan that folder: {str(e)[:150]}")
+        return {"watched_folder_id": wf_id,
+                "note": "Existing files were marked seen; only new arrivals convert."}
+    wf_id = int(args["watched_folder_id"])
+    if action in ("enable", "disable"):
+        db.execute("UPDATE watched_folders SET enabled = ? WHERE id = ?",
+                   (1 if action == "enable" else 0, wf_id))
+        return {"ok": True, "enabled": action == "enable"}
+    if action == "scan":
+        queued = await asyncio.to_thread(subscriptions.scan_watched_folder, wf_id)
+        return {"queued": queued}
+    if action == "delete":
+        db.execute("DELETE FROM watched_folders WHERE id = ?", (wf_id,))
+        return {"ok": True}
+    raise ValueError("action must be list, add, enable, disable, scan or delete")
+
+
+SAFE_SETTINGS = {"default_recipe", "default_location_id", "concurrent_downloads", "notifications",
+                 "policy_delete_old", "policy_keep_recent", "policy_low_disk_warn"}
+
+
+async def tool_manage_settings(args: dict) -> Any:
+    if args["action"] == "get":
+        return {k: v for k, v in db.all_settings().items() if k in SAFE_SETTINGS}
+    updates = args.get("settings") or {}
+    bad = set(updates) - SAFE_SETTINGS
+    if bad:
+        raise ValueError(f"These settings can't be changed via MCP: {sorted(bad)}. "
+                         f"Allowed: {sorted(SAFE_SETTINGS)}")
+    for key, value in updates.items():
+        if key == "concurrent_downloads":
+            value = max(1, min(10, int(value)))
+        if key == "default_recipe":
+            recipes.get_recipe(value)  # validate
+        db.set_setting(key, value)
+    return {k: v for k, v in db.all_settings().items() if k in SAFE_SETTINGS}
+
+
+async def tool_list_storage(args: dict) -> Any:
+    out = []
+    for loc in db.query("SELECT * FROM storage_locations ORDER BY id"):
+        usage = await asyncio.to_thread(storage.usage, loc)
+        display = "/data/downloads" if loc["type"] == "local" else \
+            f"//{loc['host']}/{loc['share']}" + (f"/{loc['subpath']}" if loc["subpath"] else "")
+        out.append({"id": loc["id"], "name": loc["name"], "type": loc["type"], "path": display,
+                    "healthy": usage["healthy"],
+                    "total": recipes.humanize_bytes(usage["total"]),
+                    "used": recipes.humanize_bytes(usage["used"]),
+                    "free": recipes.humanize_bytes(usage["free"])})
+    return out
+
+
+async def tool_inspect_file(args: dict) -> Any:
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (int(args["location_id"]),))
+    if loc is None:
+        raise ValueError("Unknown storage location — call get_options for valid ids.")
+    meta = None
+    if loc["type"] == "local":
+        meta = await asyncio.to_thread(
+            handbrake.inspect, storage.local_root(loc) / storage._safe_rel(args["path"]))
+    result: dict[str, Any] = {"deferred": meta is None, **(meta or {})}
+    if meta is None:
+        result["note"] = "SMB files are fully inspected when a conversion job starts."
+    if args.get("profile_id"):
+        profile = handbrake.get_profile(args["profile_id"])
+        result["plan"] = handbrake.plan(meta, profile)
+        if not profile["available"]:
+            result["plan"]["warning"] = "This profile's encoder is unavailable on this server."
+    return result
 
 
 ToolHandler = Callable[[dict], Awaitable[Any]]
@@ -196,6 +365,9 @@ TOOLS: dict[str, tuple[ToolHandler, dict]] = {
             "url": {"type": "string"},
             "recipe_id": {"type": "string", "description": "e.g. universal, audio, archive, mobile, plex"},
             "location_id": {"type": "integer"},
+            "overrides": {"type": "object", "description": "Advanced tweaks on top of the recipe",
+                          "properties": {f["key"]: {"type": "string", "enum": f["opts"], "description": f["help"]}
+                                         for f in recipes.ADV_FIELDS}},
             "convert_profile_id": {"type": "string", "description": "Optionally convert after download with this HandBrake profile"},
             "convert_mode": {"type": "string", "enum": ["when_needed", "always"]},
             "keep_original": {"type": "boolean", "description": "Keep both original and converted files (default false)"},
@@ -208,10 +380,10 @@ TOOLS: dict[str, tuple[ToolHandler, dict]] = {
             "status": {"type": "string", "enum": ["queued", "downloading", "paused", "completed", "failed"]}}},
     }),
     "control_job": (tool_control_job, {
-        "description": "Pause, resume, retry or cancel a job. Cancelling a finished job removes it from the queue view.",
+        "description": "Pause, resume, retry, cancel or reorder a job. Cancelling a finished job removes it from the queue view; move_up/move_down reorder within the queued set.",
         "inputSchema": {"type": "object", "properties": {
             "job_id": {"type": "integer"},
-            "action": {"type": "string", "enum": ["pause", "resume", "retry", "cancel"]}},
+            "action": {"type": "string", "enum": ["pause", "resume", "retry", "cancel", "move_up", "move_down"]}},
             "required": ["job_id", "action"]},
     }),
     "clear_finished_jobs": (tool_clear_finished_jobs, {
@@ -239,13 +411,57 @@ TOOLS: dict[str, tuple[ToolHandler, dict]] = {
             "out_location_id": {"type": "integer"},
             "out_subdir": {"type": "string", "default": "converted"},
             "retention": {"type": "string", "enum": ["keep", "move", "delete"], "default": "keep"},
+            "move_subdir": {"type": "string", "default": "originals", "description": "Where sources go when retention=move"},
             "start_paused": {"type": "boolean"}},
             "required": ["location_id", "paths", "profile_id"]},
     }),
-    "manage_subscriptions": (tool_manage_subscriptions, {
-        "description": "List, add or delete channel/playlist subscriptions. Adding checks the channel immediately; backfill queues the N most recent videos (0 = new uploads only).",
+    "delete_library_item": (tool_delete_library_item, {
+        "description": "Permanently delete a library item's file from storage and remove its entry. Irreversible — confirm with the user before calling.",
+        "inputSchema": {"type": "object", "properties": {"library_id": {"type": "integer"}},
+                        "required": ["library_id"]},
+    }),
+    "manage_profiles": (tool_manage_profiles, {
+        "description": "List (full settings), create, update or delete custom HandBrake conversion profiles. Built-ins are read-only. Update merges partial settings.",
         "inputSchema": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["list", "add", "delete"]},
+            "action": {"type": "string", "enum": ["list", "create", "update", "delete"]},
+            "profile_id": {"type": "string", "description": "custom-N id for update/delete"},
+            "name": {"type": "string"}, "desc": {"type": "string"},
+            "settings": {"type": "object", "description": "container(mp4|mkv), encoder(x264|x265|…), quality(RF 5-40), max_height, framerate(source|60|30), audio_codec(aac|opus|copy), audio_bitrate, all_audio, subtitles(keep|none), crop(auto|none), deinterlace"}},
+            "required": ["action"]},
+    }),
+    "manage_watched_folders": (tool_manage_watched_folders, {
+        "description": "List, add, enable/disable, scan-now or delete watched folders (new video files appearing in them convert automatically; existing files aren't touched on add).",
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "add", "enable", "disable", "scan", "delete"]},
+            "watched_folder_id": {"type": "integer"},
+            "location_id": {"type": "integer"}, "path": {"type": "string"},
+            "profile_id": {"type": "string"}, "out_location_id": {"type": "integer"},
+            "out_subdir": {"type": "string"}, "retention": {"type": "string", "enum": ["keep", "move", "delete"]},
+            "move_subdir": {"type": "string"}},
+            "required": ["action"]},
+    }),
+    "manage_settings": (tool_manage_settings, {
+        "description": "Read or change safe server settings: default_recipe, default_location_id, concurrent_downloads (1-10), notifications, policy toggles. Secrets (cookies, SSO) are not accessible.",
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["get", "set"]},
+            "settings": {"type": "object"}},
+            "required": ["action"]},
+    }),
+    "list_storage": (tool_list_storage, {
+        "description": "Per-location storage breakdown: path, health, total/used/free space.",
+        "inputSchema": {"type": "object", "properties": {}},
+    }),
+    "inspect_file": (tool_inspect_file, {
+        "description": "ffprobe a file on storage (codec, resolution, duration, audio). Pass profile_id to also get the conversion plan (copy vs remux vs full transcode). SMB files defer inspection to job start.",
+        "inputSchema": {"type": "object", "properties": {
+            "location_id": {"type": "integer"}, "path": {"type": "string"},
+            "profile_id": {"type": "string"}},
+            "required": ["location_id", "path"]},
+    }),
+    "manage_subscriptions": (tool_manage_subscriptions, {
+        "description": "List, add, enable/disable, check-now or delete channel/playlist subscriptions. Adding checks the channel immediately; backfill queues the N most recent videos (0 = new uploads only).",
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "add", "enable", "disable", "check", "delete"]},
             "name": {"type": "string"}, "url": {"type": "string"},
             "freq": {"type": "string", "enum": ["hourly", "every 6 hours", "daily", "weekly"]},
             "recipe_id": {"type": "string"}, "location_id": {"type": "integer"},
