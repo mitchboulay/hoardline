@@ -159,10 +159,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 
 def connect() -> sqlite3.Connection:
+    # journal_mode=WAL is set ONCE in init_db (it persists in the file, and
+    # setting it needs an exclusive lock — doing it per-connection caused a
+    # lock storm under concurrent workers). Per-connection pragmas here must
+    # all be lock-free flags.
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -208,6 +212,7 @@ def init_db() -> None:
     SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     LOCAL_DOWNLOADS.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")  # persistent; set while idle at startup
         conn.executescript(SCHEMA)
         existing = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
         for column, ddl in JOBS_MIGRATIONS.items():

@@ -7,6 +7,7 @@ with ffprobe, then move into place before retention runs."""
 import json
 import re
 import shutil
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -27,13 +28,25 @@ _running: set[int] = set()
 
 
 def _update(job_id: int, **fields) -> None:
+    """Job-state writes must never kill a worker thread. Retry briefly on a
+    locked database, then drop the write — the scheduler's zombie sweep
+    requeues any job whose final state didn't land."""
     cols = ", ".join(f"{k} = ?" for k in fields)
-    db.execute(f"UPDATE jobs SET {cols}, updated_at = datetime('now') WHERE id = ?",
-               (*fields.values(), job_id))
+    for attempt in range(6):
+        try:
+            db.execute(f"UPDATE jobs SET {cols}, updated_at = datetime('now') WHERE id = ?",
+                       (*fields.values(), job_id))
+            return
+        except sqlite3.OperationalError:
+            time.sleep(0.3 * (attempt + 1))
 
 
 def _log(job_id: int, line: str) -> None:
-    db.execute("UPDATE jobs SET log = substr(log || ? || char(10), -4000) WHERE id = ?", (line, job_id))
+    try:
+        db.execute("UPDATE jobs SET log = substr(log || ? || char(10), -4000) WHERE id = ?",
+                   (line, job_id))
+    except sqlite3.OperationalError:
+        pass  # logs are best-effort
 
 
 # ------------------------------------------------------------------ enqueue
@@ -185,7 +198,7 @@ def _progress_hook(job_id: int, last_write: list[float]):
         if d["status"] != "downloading":
             return
         now = time.monotonic()
-        if now - last_write[0] < 1.0:
+        if now - last_write[0] < 2.0:
             return
         last_write[0] = now
         total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -385,9 +398,23 @@ def _run_job(job: dict) -> None:
         _running.discard(job_id)
 
 
+def _requeue_zombies() -> None:
+    """Self-healing: a job marked running in the DB with no live worker thread
+    (worker died, write dropped, unclean state) goes back to the queue."""
+    for row in db.query("SELECT id FROM jobs WHERE status = 'downloading'"):
+        if row["id"] not in _running:
+            db.execute(
+                "UPDATE jobs SET status = 'queued', stage = 'queued', speed = '—', eta = '—', "
+                "fps = '—' WHERE id = ? AND status = 'downloading'", (row["id"],))
+
+
 def _scheduler_loop() -> None:
+    tick = 0
     while True:
         try:
+            tick += 1
+            if tick % 15 == 0:
+                _requeue_zombies()
             limit = int(db.get_setting("concurrent_downloads") or 3)
             if len(_running) < limit:
                 queued = db.query(
