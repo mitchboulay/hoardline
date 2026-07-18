@@ -12,7 +12,23 @@ Hoardline wraps [yt-dlp](https://github.com/yt-dlp/yt-dlp) and
 and Hoardline chooses the right formats, codecs, and containers behind the
 scenes. One container, one SQLite file, no external services.
 
-<!-- screenshots: docs/screenshots/{quick.png,queue.png,convert.png} -->
+<p align="center">
+  <img src="docs/screenshots/quick-download.png" alt="Quick Download — paste a link, pick an outcome" width="800" />
+</p>
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/queue.png" alt="Unified download and conversion queue" /></td>
+    <td><img src="docs/screenshots/dashboard.png" alt="Dashboard" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/recipes.png" alt="Download recipes" /></td>
+    <td><img src="docs/screenshots/profiles.png" alt="HandBrake conversion profiles" /></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/library.png" alt="Library grouped by channel" /></td>
+  </tr>
+</table>
 
 ## Features
 
