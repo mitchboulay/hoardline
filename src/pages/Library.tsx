@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { LibItem } from '../api'
 import { IconButton, Thumb } from '../components'
 import { Ic } from '../icons'
 import { gradientFor } from '../lib/jobs'
 import { useStore } from '../store'
+
+const OTHER = 'Other'
+const channelOf = (item: LibItem) => (item.uploader ?? '').replace(/^📺\s*/, '').trim() || OTHER
 
 function LibActions({ item }: { item: LibItem }) {
   const showToast = useStore((s) => s.showToast)
@@ -35,10 +38,24 @@ export default function Library() {
   const library = useStore((s) => s.library)
   const loadLibrary = useStore((s) => s.loadLibrary)
   const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [channel, setChannel] = useState<string | null>(null)
 
   useEffect(() => {
     void loadLibrary().catch(() => {})
   }, [loadLibrary])
+
+  const channels = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const item of library) {
+      const c = channelOf(item)
+      counts.set(c, (counts.get(c) ?? 0) + 1)
+    }
+    // Biggest channels first; the grab-bag bucket always last.
+    return [...counts.entries()].sort(
+      (a, b) => (a[0] === OTHER ? 1 : b[0] === OTHER ? -1 : b[1] - a[1] || a[0].localeCompare(b[0])))
+  }, [library])
+
+  const visible = channel ? library.filter((l) => channelOf(l) === channel) : library
 
   return (
     <div className="page">
@@ -69,6 +86,32 @@ export default function Library() {
         </div>
       </div>
 
+      {channels.length > 1 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          <button
+            onClick={() => setChannel(null)}
+            className="chip"
+            style={channel === null
+              ? { cursor: 'pointer', color: 'var(--accent2)', background: 'var(--accent-soft)', borderColor: 'var(--accent)', fontWeight: 600 }
+              : { cursor: 'pointer' }}
+          >
+            All <span style={{ opacity: 0.65 }}>{library.length}</span>
+          </button>
+          {channels.map(([name, count]) => (
+            <button
+              key={name}
+              onClick={() => setChannel(channel === name ? null : name)}
+              className="chip"
+              style={channel === name
+                ? { cursor: 'pointer', color: 'var(--accent2)', background: 'var(--accent-soft)', borderColor: 'var(--accent)', fontWeight: 600 }
+                : { cursor: 'pointer' }}
+            >
+              {name} <span style={{ opacity: 0.65 }}>{count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {library.length === 0 && (
         <div className="card" style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--faint)' }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--muted)' }}>No downloads yet.</div>
@@ -78,7 +121,7 @@ export default function Library() {
 
       {view === 'grid' ? (
         <div className="grid-lib">
-          {library.map((l) => (
+          {visible.map((l) => (
             <div key={l.id} className="card" style={{ overflow: 'hidden' }}>
               <div style={{ height: 132, position: 'relative' }}>
                 <Thumb src={l.thumbnail} fallback={gradientFor(l.id)} style={{ position: 'absolute', inset: 0 }} />
@@ -92,6 +135,7 @@ export default function Library() {
                 >
                   {l.title}
                 </div>
+                <div style={{ fontSize: 11.5, color: 'var(--faint)', marginTop: 3 }}>{channelOf(l)}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                   <span className="chip chip-sm">{l.recipe_name}</span>
                   <span className="chip chip-sm">{l.res}</span>
@@ -105,9 +149,9 @@ export default function Library() {
           ))}
         </div>
       ) : (
-        library.length > 0 && (
+        visible.length > 0 && (
           <div className="card" style={{ overflow: 'hidden' }}>
-            {library.map((l) => (
+            {visible.map((l) => (
               <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
                 <Thumb src={l.thumbnail} fallback={gradientFor(l.id)} style={{ width: 64, height: 38, borderRadius: 6 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -115,7 +159,7 @@ export default function Library() {
                     {l.title}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--faint)', marginTop: 3 }}>
-                    {l.created_at.slice(0, 10)} · {l.recipe_name} · {l.res} · {l.size_str}
+                    {channelOf(l)} · {l.created_at.slice(0, 10)} · {l.recipe_name} · {l.res} · {l.size_str}
                   </div>
                 </div>
                 <LibActions item={l} />
