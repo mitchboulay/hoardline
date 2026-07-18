@@ -20,7 +20,17 @@ def _latest_entries(url: str, limit: int = MAX_NEW_PER_CHECK) -> list[dict]:
             "playlist_items": f"1-{limit}", **ytdlp_svc.cookie_opts()}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
-    return list(info.get("entries") or [])
+    entries = list(info.get("entries") or [])
+    # A bare channel URL (youtube.com/@handle, no /videos) extracts to the
+    # channel's TABS as nested playlists, all sharing the channel id — the
+    # checker would mark that id seen and never find a video. Drill into the
+    # Videos tab (fall back to the first tab) to get actual uploads.
+    if entries and all(e.get("_type") == "playlist" for e in entries):
+        videos_url = (info.get("channel_url") or info.get("webpage_url") or url).rstrip("/") + "/videos"
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(videos_url, download=False)
+        entries = list(info.get("entries") or [])
+    return entries
 
 
 def check_subscription(sub_id: int, bootstrap: bool = False, backfill: int = 0) -> int:
