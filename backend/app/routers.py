@@ -170,6 +170,24 @@ def list_jobs():
     return _jobs_snapshot()
 
 
+class ClearBody(BaseModel):
+    ids: list[int] | None = None  # omitted = clear ALL finished jobs
+
+
+@api.post("/jobs/clear")
+def clear_jobs(body: ClearBody):
+    """Remove finished (completed/failed) jobs from the queue view. Files and
+    library entries are untouched; running/queued jobs are never cleared."""
+    sql = "DELETE FROM jobs WHERE status IN ('completed', 'failed')"
+    params: list[int] = []
+    if body.ids:
+        sql += f" AND id IN ({','.join('?' * len(body.ids))})"
+        params = body.ids
+    with db.connect() as conn:
+        cleared = conn.execute(sql, params).rowcount
+    return {"cleared": cleared}
+
+
 @api.post("/jobs/{job_id}/{action}")
 def job_action(job_id: int, action: str):
     handlers = {"cancel": jobs.cancel, "pause": jobs.pause, "resume": jobs.resume, "retry": jobs.retry}

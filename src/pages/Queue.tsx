@@ -162,6 +162,7 @@ export default function Queue() {
   const queueFilter = useStore((s) => s.queueFilter)
   const setQueueFilter = useStore((s) => s.setQueueFilter)
   const jobAction = useStore((s) => s.jobAction)
+  const clearJobs = useStore((s) => s.clearJobs)
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
 
@@ -176,9 +177,17 @@ export default function Queue() {
     else next.add(id)
     setSelectedIds(next)
   }
+  const allVisibleSelected = visible.length > 0 && visible.every((j) => selectedIds.has(j.id))
+  const toggleAll = () =>
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(visible.map((j) => j.id)))
   const selectedJobs = visible.filter((j) => selectedIds.has(j.id))
+  const finishedCount = counts.completed + counts.failed
   const bulk = (action: 'cancel' | 'retry' | 'pause' | 'resume') => {
     selectedJobs.forEach((j) => jobAction(j.id, action))
+    setSelectedIds(new Set())
+  }
+  const bulkClear = () => {
+    void clearJobs(selectedJobs.map((j) => j.id))
     setSelectedIds(new Set())
   }
 
@@ -199,6 +208,7 @@ export default function Queue() {
         {selectedJobs.length > 0 && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>{selectedJobs.length} selected:</span>
+            <button className="seg-btn on" onClick={bulkClear} title="Remove finished jobs from the list — files are untouched">Clear</button>
             <button className="seg-btn on" onClick={() => bulk('retry')}>Retry</button>
             <button className="seg-btn on" onClick={() => bulk('pause')}>Pause</button>
             <button className="seg-btn on" onClick={() => bulk('resume')}>Resume</button>
@@ -206,6 +216,15 @@ export default function Queue() {
           </div>
         )}
         <div style={{ flex: 1 }} />
+        {selectedJobs.length === 0 && finishedCount > 0 && (
+          <button
+            className="seg-btn on"
+            onClick={() => void clearJobs()}
+            title="Removes all completed and failed jobs from the list — files and library are untouched"
+          >
+            Clear finished ({finishedCount})
+          </button>
+        )}
         <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 10, padding: '8px 12px', width: 220 }}>
           <span style={{ display: 'flex', color: 'var(--faint)' }}>
             <Ic.search />
@@ -221,6 +240,12 @@ export default function Queue() {
       </div>
 
       <div className="card" style={{ overflow: 'hidden' }}>
+        {visible.length > 0 && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px', borderBottom: '1px solid var(--border)', fontSize: 12.5, color: 'var(--muted)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} aria-label="Select all visible jobs" />
+            Select all {visible.length} shown
+          </label>
+        )}
         {visible.map((j) => (
           <JobRow key={j.id} job={j} selected={selectedIds.has(j.id)} onToggle={() => toggle(j.id)} />
         ))}

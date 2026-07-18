@@ -110,6 +110,7 @@ interface State {
   queueFilter: QueueFilter
   setQueueFilter: (filter: QueueFilter) => void
   jobAction: (id: number, action: 'pause' | 'resume' | 'retry' | 'cancel' | 'up' | 'down') => void
+  clearJobs: (ids?: number[]) => Promise<void>
   deleteLibItem: (id: number) => void
 
   // storage actions
@@ -345,6 +346,18 @@ export const useStore = create<State>((set, get) => {
         return
       }
       void run()
+    },
+
+    clearJobs: async (ids) => {
+      try {
+        const resp = await api.post<{ cleared: number }>('/api/jobs/clear', { ids: ids ?? null })
+        get().showToast(resp.cleared
+          ? `Cleared ${resp.cleared} finished job${resp.cleared === 1 ? '' : 's'}`
+          : 'Nothing to clear — only finished jobs can be cleared', 'info')
+        await get().loadJobs()
+      } catch (e) {
+        toastError(e)
+      }
     },
 
     deleteLibItem: (id) => {
