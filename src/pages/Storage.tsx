@@ -57,7 +57,7 @@ function LocationDialog({ existing, onClose }: { existing: StorageLocation | nul
             ? 'Changes are verified against the share before saving. Files already saved stay where they are — new downloads use the updated path.'
             : 'Connect an SMB share (NAS). Credentials are verified before saving, then reused for every download.'}
         </p>
-        <Field label="Name (e.g. UNAS Media)" value={name} onChange={setName} autoFocus />
+        <Field label="Name (e.g. NAS Media)" value={name} onChange={setName} autoFocus />
         {!editingLocal && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
