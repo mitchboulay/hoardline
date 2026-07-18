@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import {
   api, ApiError, clearToken, getToken, setToken,
-  type AdvField, type Analysis, type Job, type LibItem, type Recipe, type Settings,
-  type Stats, type StorageLocation, type Subscription, type SystemInfo,
+  type AdvField, type Analysis, type Capabilities, type ConversionProfile, type Job,
+  type LibItem, type Recipe, type Settings, type Stats, type StorageLocation,
+  type Subscription, type SystemInfo, type WatchedFolder,
 } from './api'
 import { ACCENTS, type Accent } from './theme'
 import type { QueueFilter } from './lib/jobs'
@@ -56,6 +57,13 @@ interface State {
 
   // server data
   jobs: Job[]
+  setJobs: (jobs: Job[]) => void
+  profiles: ConversionProfile[]
+  capabilities: Capabilities | null
+  watchedFolders: WatchedFolder[]
+  loadProfiles: () => Promise<void>
+  loadCapabilities: () => Promise<void>
+  loadWatchedFolders: () => Promise<void>
   stats: Stats | null
   system: SystemInfo | null
   library: LibItem[]
@@ -82,6 +90,12 @@ interface State {
   showAdvanced: boolean
   advChoices: Record<string, string>
   selectedLocationId: number | null
+  convertMode: 'none' | 'when_needed' | 'always'
+  convertProfileId: string
+  convertRetention: 'keep' | 'delete'
+  setConvertMode: (mode: 'none' | 'when_needed' | 'always') => void
+  setConvertProfileId: (id: string) => void
+  setConvertRetention: (r: 'keep' | 'delete') => void
   setUrl: (url: string) => void
   clearUrl: () => void
   analyze: () => Promise<void>
@@ -94,7 +108,7 @@ interface State {
   // queue / library actions
   queueFilter: QueueFilter
   setQueueFilter: (filter: QueueFilter) => void
-  jobAction: (id: number, action: 'pause' | 'resume' | 'retry' | 'cancel') => void
+  jobAction: (id: number, action: 'pause' | 'resume' | 'retry' | 'cancel' | 'up' | 'down') => void
   deleteLibItem: (id: number) => void
 
   // storage actions
@@ -182,6 +196,14 @@ export const useStore = create<State>((set, get) => {
     },
 
     jobs: [],
+    setJobs: (jobs) => set({ jobs }),
+    profiles: [],
+    capabilities: null,
+    watchedFolders: [],
+    loadProfiles: async () => set({ profiles: await api.get<ConversionProfile[]>('/api/profiles') }),
+    loadCapabilities: async () => set({ capabilities: await api.get<Capabilities>('/api/capabilities') }),
+    loadWatchedFolders: async () =>
+      set({ watchedFolders: await api.get<WatchedFolder[]>('/api/watched-folders') }),
     stats: null,
     system: null,
     library: [],
@@ -219,6 +241,12 @@ export const useStore = create<State>((set, get) => {
     showAdvanced: false,
     advChoices: {},
     selectedLocationId: null,
+    convertMode: 'none',
+    convertProfileId: 'universal-1080p',
+    convertRetention: 'keep',
+    setConvertMode: (convertMode) => set({ convertMode }),
+    setConvertProfileId: (convertProfileId) => set({ convertProfileId }),
+    setConvertRetention: (convertRetention) => set({ convertRetention }),
     setUrl: (url) => set({ url }),
     clearUrl: () => set({ url: '', analysis: null }),
     analyze: async () => {
@@ -241,7 +269,8 @@ export const useStore = create<State>((set, get) => {
     setAdvChoice: (key, value) => set((s) => ({ advChoices: { ...s.advChoices, [key]: value } })),
     setLocation: (id) => set({ selectedLocationId: id }),
     download: async () => {
-      const { analysis, selectedIntent, selectedLocationId, locations, advChoices } = get()
+      const { analysis, selectedIntent, selectedLocationId, locations, advChoices,
+              convertMode, convertProfileId, convertRetention } = get()
       if (!analysis) return false
       const locationId = selectedLocationId ?? locations[0]?.id
       if (!locationId) {
@@ -256,6 +285,9 @@ export const useStore = create<State>((set, get) => {
           title: analysis.title,
           thumbnail: analysis.thumbnail,
           overrides: advChoices,
+          convert: convertMode === 'none'
+            ? null
+            : { mode: convertMode, profile_id: convertProfileId, retention: convertRetention },
         })
         const name = analysis.intents.find((i) => i.id === selectedIntent)?.name ?? selectedIntent
         set({ url: '', analysis: null, showAdvanced: false, advChoices: {} })

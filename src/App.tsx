@@ -1,14 +1,18 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from 'react-router-dom'
+import { getToken } from './api'
 import { ConfirmDialog, Toast } from './components'
 import { Ic, type IconName } from './icons'
 import { useStore } from './store'
 import Dashboard from './pages/Dashboard'
 import Quick from './pages/Quick'
+import Convert from './pages/Convert'
 import Queue from './pages/Queue'
 import Library from './pages/Library'
 import Recipes from './pages/Recipes'
+import Profiles from './pages/Profiles'
 import Subscriptions from './pages/Subscriptions'
+import WatchedFolders from './pages/WatchedFolders'
 import Storage from './pages/Storage'
 import Settings from './pages/Settings'
 import { ForceChangePassword, Login } from './pages/Login'
@@ -16,10 +20,13 @@ import { ForceChangePassword, Login } from './pages/Login'
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
   { to: '/quick', label: 'Quick Download', icon: 'quick' },
+  { to: '/convert', label: 'Convert', icon: 'hq' },
   { to: '/queue', label: 'Queue', icon: 'queue' },
   { to: '/library', label: 'Library', icon: 'library' },
   { to: '/recipes', label: 'Recipes', icon: 'recipes' },
+  { to: '/profiles', label: 'Profiles', icon: 'sliders' },
   { to: '/subscriptions', label: 'Subscriptions', icon: 'subs' },
+  { to: '/watched-folders', label: 'Watched folders', icon: 'folder' },
   { to: '/storage', label: 'Storage', icon: 'storage' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ]
@@ -109,20 +116,46 @@ function Sidebar() {
 
 function AuthedApp() {
   const loadJobs = useStore((s) => s.loadJobs)
+  const setJobs = useStore((s) => s.setJobs)
   const loadMe = useStore((s) => s.loadMe)
   const loadRecipes = useStore((s) => s.loadRecipes)
   const loadLocations = useStore((s) => s.loadLocations)
   const loadSettings = useStore((s) => s.loadSettings)
+  const loadProfiles = useStore((s) => s.loadProfiles)
+  const loadCapabilities = useStore((s) => s.loadCapabilities)
 
   useEffect(() => {
     void loadMe()
     void loadRecipes()
     void loadLocations()
     void loadSettings()
+    void loadProfiles().catch(() => {})
+    void loadCapabilities().catch(() => {})
     void loadJobs()
-    const poll = setInterval(() => void loadJobs().catch(() => {}), 1500)
-    return () => clearInterval(poll)
-  }, [loadJobs, loadMe, loadRecipes, loadLocations, loadSettings])
+
+    // Live queue updates over SSE; falls back to polling if the stream dies.
+    let es: EventSource | null = null
+    let poll: ReturnType<typeof setInterval> | undefined
+    const startPolling = () => {
+      if (!poll) poll = setInterval(() => void loadJobs().catch(() => {}), 1500)
+    }
+    const token = getToken()
+    if (token && 'EventSource' in window) {
+      es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`)
+      es.onmessage = (e) => setJobs(JSON.parse(e.data))
+      es.onerror = () => {
+        es?.close()
+        es = null
+        startPolling()
+      }
+    } else {
+      startPolling()
+    }
+    return () => {
+      es?.close()
+      if (poll) clearInterval(poll)
+    }
+  }, [loadJobs, setJobs, loadMe, loadRecipes, loadLocations, loadSettings, loadProfiles, loadCapabilities])
 
   return (
     <div className="shell">
@@ -132,10 +165,13 @@ function AuthedApp() {
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/quick" element={<Quick />} />
+            <Route path="/convert" element={<Convert />} />
             <Route path="/queue" element={<Queue />} />
             <Route path="/library" element={<Library />} />
             <Route path="/recipes" element={<Recipes />} />
+            <Route path="/profiles" element={<Profiles />} />
             <Route path="/subscriptions" element={<Subscriptions />} />
+            <Route path="/watched-folders" element={<WatchedFolders />} />
             <Route path="/storage" element={<Storage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

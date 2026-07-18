@@ -107,6 +107,109 @@ def usage(loc: dict) -> dict:
         return {"total": 0, "free": 0, "used": 0, "healthy": False}
 
 
+def local_root(loc: dict) -> Path:
+    return db.LOCAL_DOWNLOADS / (loc.get("subpath") or "").strip("/")
+
+
+def _safe_rel(rel: str) -> str:
+    rel = (rel or "").strip("/").replace("\\", "/")
+    if ".." in rel.split("/"):
+        raise StorageError("Invalid path.")
+    return rel
+
+
+def list_dir(loc: dict, rel: str = "") -> dict:
+    """List a directory inside a storage location: {dirs, files}."""
+    rel = _safe_rel(rel)
+    dirs: list[str] = []
+    files: list[dict] = []
+    try:
+        if loc["type"] == "local":
+            base = local_root(loc) / rel
+            if base.is_dir():
+                for entry in sorted(base.iterdir(), key=lambda p: p.name.lower()):
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_dir():
+                        dirs.append(entry.name)
+                    else:
+                        stat = entry.stat()
+                        files.append({"name": entry.name, "size": stat.st_size, "mtime": int(stat.st_mtime)})
+        else:
+            _register(loc)
+            base = str(PureWindowsPath(_smb_root(loc)) / rel.replace("/", "\\")) if rel else _smb_root(loc)
+            for entry in sorted(smbclient.scandir(base), key=lambda e: e.name.lower()):
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir():
+                    dirs.append(entry.name)
+                else:
+                    stat = entry.stat()
+                    files.append({"name": entry.name, "size": stat.st_size, "mtime": int(stat.st_mtime)})
+    except StorageError:
+        raise
+    except Exception as e:
+        raise StorageError(_humanize_smb_error(e)) from e
+    return {"dirs": dirs, "files": files}
+
+
+def fetch_file(loc: dict, rel: str, dst: Path) -> None:
+    """Copy a file from a storage location into local scratch."""
+    rel = _safe_rel(rel)
+    try:
+        if loc["type"] == "local":
+            shutil.copyfile(local_root(loc) / rel, dst)
+        else:
+            _register(loc)
+            unc = str(PureWindowsPath(_smb_root(loc)) / rel.replace("/", "\\"))
+            smbshutil.copyfile(unc, str(dst))
+    except StorageError:
+        raise
+    except Exception as e:
+        raise StorageError(_humanize_smb_error(e)) from e
+
+
+def delete_rel(loc: dict, rel: str) -> None:
+    rel = _safe_rel(rel)
+    try:
+        if loc["type"] == "local":
+            (local_root(loc) / rel).unlink(missing_ok=True)
+        else:
+            _register(loc)
+            unc = str(PureWindowsPath(_smb_root(loc)) / rel.replace("/", "\\"))
+            if smbpath.exists(unc):
+                smbclient.remove(unc)
+    except StorageError:
+        raise
+    except Exception as e:
+        raise StorageError(_humanize_smb_error(e)) from e
+
+
+def move_rel(loc: dict, rel: str, dest_subdir: str) -> str:
+    """Move a file to another folder within the same location. Returns new rel."""
+    rel = _safe_rel(rel)
+    dest_subdir = _safe_rel(dest_subdir)
+    name = rel.split("/")[-1]
+    try:
+        if loc["type"] == "local":
+            dest_dir = local_root(loc) / dest_subdir
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            final = _dedupe_local(dest_dir / name)
+            shutil.move(str(local_root(loc) / rel), final)
+            return f"{dest_subdir}/{final.name}"
+        _register(loc)
+        src_unc = str(PureWindowsPath(_smb_root(loc)) / rel.replace("/", "\\"))
+        dest_dir_unc = str(PureWindowsPath(_smb_root(loc)) / dest_subdir.replace("/", "\\"))
+        smbclient.makedirs(dest_dir_unc, exist_ok=True)
+        final = _dedupe_smb(str(PureWindowsPath(dest_dir_unc) / name))
+        smbclient.rename(src_unc, final)
+        return f"{dest_subdir}/{PureWindowsPath(final).name}"
+    except StorageError:
+        raise
+    except Exception as e:
+        raise StorageError(_humanize_smb_error(e)) from e
+
+
 def _dedupe_local(dest: Path) -> Path:
     i, final = 1, dest
     while final.exists():

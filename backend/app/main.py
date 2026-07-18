@@ -16,13 +16,16 @@ async def lifespan(app: FastAPI):
     db.init_db()
     jobs.start_scheduler()
     checker = asyncio.create_task(subscriptions.checker_loop())
+    watcher = asyncio.create_task(subscriptions.watched_loop())
     yield
     checker.cancel()
+    watcher.cancel()
 
 
 app = FastAPI(title="MediaFlow", lifespan=lifespan)
 app.include_router(routers.public)
 app.include_router(routers.api)
+app.include_router(routers.events_router)
 
 
 @app.get("/api/health")

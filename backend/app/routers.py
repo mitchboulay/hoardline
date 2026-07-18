@@ -1,15 +1,16 @@
 """All API routes. Everything except /api/auth/login, /api/auth/config and the
 SSO redirect pair requires a Bearer token."""
 import asyncio
+import json
 import shutil
 import subprocess
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import auth, db, jobs, recipes, storage, subscriptions, ytdlp_svc
+from . import auth, db, handbrake, jobs, recipes, storage, subscriptions, ytdlp_svc
 
 public = APIRouter(prefix="/api/auth", tags=["auth"])
 api = APIRouter(prefix="/api", tags=["api"], dependencies=[Depends(auth.require_user)])
@@ -116,6 +117,12 @@ async def analyze(body: AnalyzeBody):
 
 # -------------------------------------------------------------------- jobs
 
+class ConvertOptions(BaseModel):
+    mode: str = "none"  # none | when_needed | always
+    profile_id: str = ""
+    retention: str = "keep"  # keep | delete (the downloaded original)
+
+
 class JobBody(BaseModel):
     url: str
     recipe_id: str
@@ -123,26 +130,37 @@ class JobBody(BaseModel):
     title: str = ""
     thumbnail: str | None = None
     overrides: dict[str, str] = {}
+    convert: ConvertOptions | None = None
 
 
 @api.post("/jobs")
 def create_job(body: JobBody):
     try:
         job_id = jobs.enqueue(body.url, body.recipe_id, body.location_id,
-                              body.title, body.thumbnail, body.overrides)
+                              body.title, body.thumbnail, body.overrides,
+                              convert=body.convert.model_dump() if body.convert else None)
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     return db.query_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
 
 
+def _jobs_snapshot() -> list[dict]:
+    return db.query(
+        "SELECT * FROM jobs ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 "
+        "WHEN 'paused' THEN 2 ELSE 3 END, priority, id DESC LIMIT 200")
+
+
 @api.get("/jobs")
 def list_jobs():
-    return db.query("SELECT * FROM jobs ORDER BY id DESC LIMIT 200")
+    return _jobs_snapshot()
 
 
 @api.post("/jobs/{job_id}/{action}")
 def job_action(job_id: int, action: str):
     handlers = {"cancel": jobs.cancel, "pause": jobs.pause, "resume": jobs.resume, "retry": jobs.retry}
+    if action in ("up", "down"):
+        jobs.move(job_id, action)
+        return {"ok": True}
     if action not in handlers:
         raise HTTPException(status_code=404, detail="Unknown action")
     try:
@@ -150,6 +168,239 @@ def job_action(job_id: int, action: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"ok": True}
+
+
+# SSE stream of queue updates. EventSource can't set headers, so the token
+# rides a query param and is validated against the same JWT secret.
+events_router = APIRouter(prefix="/api", tags=["events"])
+
+
+@events_router.get("/events")
+async def job_events(token: str):
+    import jwt as _jwt
+    try:
+        _jwt.decode(token, auth._jwt_secret(), algorithms=["HS256"])
+    except _jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    async def stream():
+        last_fingerprint = None
+        while True:
+            snapshot = _jobs_snapshot()
+            fingerprint = hash(json.dumps(snapshot, sort_keys=True, default=str))
+            if fingerprint != last_fingerprint:
+                last_fingerprint = fingerprint
+                yield f"data: {json.dumps(snapshot, default=str)}\n\n"
+            else:
+                yield ": keepalive\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ------------------------------------------------------------- conversions
+
+@api.get("/capabilities")
+def capabilities():
+    return handbrake.capabilities()
+
+
+@api.get("/profiles")
+def list_profiles():
+    return handbrake.list_profiles()
+
+
+class ProfileBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    desc: str = ""
+    settings: dict
+
+
+@api.post("/profiles")
+def create_profile(body: ProfileBody):
+    try:
+        settings = handbrake.validate_settings(body.settings)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    pid = db.execute("INSERT INTO conversion_profiles (name, desc, settings) VALUES (?, ?, ?)",
+                     (body.name, body.desc, json.dumps(settings)))
+    return handbrake.get_profile(f"custom-{pid}")
+
+
+@api.put("/profiles/{profile_id}")
+def update_profile(profile_id: str, body: ProfileBody):
+    if not profile_id.startswith("custom-"):
+        raise HTTPException(status_code=422, detail="Built-in profiles can't be edited — duplicate one instead.")
+    try:
+        settings = handbrake.validate_settings(body.settings)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.execute("UPDATE conversion_profiles SET name = ?, desc = ?, settings = ? WHERE id = ?",
+               (body.name, body.desc, json.dumps(settings), int(profile_id.removeprefix("custom-"))))
+    return handbrake.get_profile(profile_id)
+
+
+@api.delete("/profiles/{profile_id}")
+def delete_profile(profile_id: str):
+    if not profile_id.startswith("custom-"):
+        raise HTTPException(status_code=422, detail="Built-in profiles can't be deleted.")
+    in_use = db.query_one(
+        "SELECT 1 FROM jobs WHERE profile_id = ? AND status IN ('queued', 'downloading', 'paused') LIMIT 1",
+        (profile_id,))
+    if in_use:
+        raise HTTPException(status_code=422, detail="Jobs in the queue still use this profile.")
+    db.execute("DELETE FROM conversion_profiles WHERE id = ?", (int(profile_id.removeprefix("custom-")),))
+    return {"ok": True}
+
+
+@api.get("/files")
+def browse_files(location_id: int, path: str = ""):
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (location_id,))
+    if loc is None:
+        raise HTTPException(status_code=404, detail="Unknown storage location")
+    try:
+        listing = storage.list_dir(loc, path)
+    except storage.StorageError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    for f in listing["files"]:
+        f["is_video"] = handbrake.is_video_file(f["name"])
+        f["size_str"] = recipes.humanize_bytes(f["size"])
+        f["path"] = f"{path.strip('/')}/{f['name']}".strip("/")
+    return listing
+
+
+@api.get("/files/inspect")
+async def inspect_file(location_id: int, path: str):
+    """ffprobe metadata for the pre-submission table. Instant for local files;
+    SMB sources are inspected at queue time instead (fetching them just to
+    probe would copy the whole file twice)."""
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (location_id,))
+    if loc is None:
+        raise HTTPException(status_code=404, detail="Unknown storage location")
+    if loc["type"] != "local":
+        return {"deferred": True}
+    try:
+        meta = await asyncio.to_thread(handbrake.inspect, storage.local_root(loc) / storage._safe_rel(path))
+    except handbrake.ConversionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"deferred": False, **meta}
+
+
+@api.get("/convert/plan")
+def convert_plan(profile_id: str, vcodec: str | None = None, height: int | None = None,
+                 container: str | None = None):
+    try:
+        profile = handbrake.get_profile(profile_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    src_meta = {"vcodec": vcodec, "height": height, "container": container} if vcodec else None
+    return handbrake.plan(src_meta, profile)
+
+
+class ConvertItem(BaseModel):
+    path: str
+    size: int = 0
+
+
+class ConvertBody(BaseModel):
+    location_id: int
+    items: list[ConvertItem] = Field(min_length=1, max_length=200)
+    profile_id: str
+    out_location_id: int
+    out_subdir: str = "converted"
+    retention: str = "keep"
+    move_subdir: str = "originals"
+
+
+@api.post("/convert")
+def create_conversions(body: ConvertBody):
+    created, errors = [], []
+    for item in body.items:
+        try:
+            created.append(jobs.enqueue_conversion(
+                src_location_id=body.location_id, src_path=item.path, src_size=item.size,
+                profile_id=body.profile_id, out_location_id=body.out_location_id,
+                out_subdir=body.out_subdir, retention=body.retention, move_subdir=body.move_subdir))
+        except (ValueError, KeyError) as e:
+            errors.append({"path": item.path, "error": str(e)})
+    if not created and errors:
+        raise HTTPException(status_code=422, detail=errors[0]["error"])
+    est_temp = sum(i.size for i in body.items) * 2.2
+    return {"created": created, "errors": errors, "est_temp_bytes": int(est_temp),
+            "est_temp_str": recipes.humanize_bytes(int(est_temp))}
+
+
+# ----------------------------------------------------------- watched folders
+
+class WatchedFolderBody(BaseModel):
+    location_id: int
+    path: str = ""
+    profile_id: str
+    out_location_id: int
+    out_subdir: str = "converted"
+    retention: str = "keep"
+    move_subdir: str = "originals"
+
+
+@api.get("/watched-folders")
+def list_watched_folders():
+    folders = db.query(
+        "SELECT wf.*, sl.name AS location_name, ol.name AS out_location_name "
+        "FROM watched_folders wf "
+        "LEFT JOIN storage_locations sl ON sl.id = wf.location_id "
+        "LEFT JOIN storage_locations ol ON ol.id = wf.out_location_id ORDER BY wf.id")
+    profile_names = {p["id"]: p["name"] for p in handbrake.list_profiles()}
+    for f in folders:
+        f["profile_name"] = profile_names.get(f["profile_id"], f["profile_id"])
+    return folders
+
+
+@api.post("/watched-folders")
+async def create_watched_folder(body: WatchedFolderBody):
+    try:
+        handbrake.get_profile(body.profile_id)
+    except KeyError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if body.retention not in ("keep", "move", "delete"):
+        raise HTTPException(status_code=422, detail="Retention must be keep, move or delete.")
+    wf_id = db.execute(
+        "INSERT INTO watched_folders (location_id, path, profile_id, out_location_id, out_subdir, "
+        "retention, move_subdir) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (body.location_id, body.path.strip("/"), body.profile_id, body.out_location_id,
+         body.out_subdir.strip("/"), body.retention, body.move_subdir.strip("/")))
+    try:
+        await asyncio.to_thread(subscriptions.scan_watched_folder, wf_id, True)
+    except Exception as e:
+        db.execute("DELETE FROM watched_folders WHERE id = ?", (wf_id,))
+        detail = str(e) if isinstance(e, (storage.StorageError, ValueError)) else "Couldn't scan that folder."
+        raise HTTPException(status_code=422, detail=detail)
+    return db.query_one("SELECT * FROM watched_folders WHERE id = ?", (wf_id,))
+
+
+@api.patch("/watched-folders/{wf_id}")
+def update_watched_folder(wf_id: int, body: dict):
+    if "enabled" in body:
+        db.execute("UPDATE watched_folders SET enabled = ? WHERE id = ?",
+                   (1 if body["enabled"] else 0, wf_id))
+    return db.query_one("SELECT * FROM watched_folders WHERE id = ?", (wf_id,))
+
+
+@api.delete("/watched-folders/{wf_id}")
+def delete_watched_folder(wf_id: int):
+    db.execute("DELETE FROM watched_folders WHERE id = ?", (wf_id,))
+    return {"ok": True}
+
+
+@api.post("/watched-folders/{wf_id}/scan")
+async def scan_watched_folder_now(wf_id: int):
+    try:
+        queued = await asyncio.to_thread(subscriptions.scan_watched_folder, wf_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except storage.StorageError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"queued": queued}
 
 
 # ----------------------------------------------------------------- library

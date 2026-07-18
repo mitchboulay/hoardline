@@ -12,7 +12,7 @@ FROM python:3.12-slim
 # deno: yt-dlp 2026.x needs a JS runtime for full YouTube extraction —
 # without one some videos fail outright and format lists are incomplete.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg handbrake-cli curl unzip \
     && case "$(dpkg --print-architecture)" in \
          amd64) DENO_ARCH=x86_64-unknown-linux-gnu ;; \
          arm64) DENO_ARCH=aarch64-unknown-linux-gnu ;; \

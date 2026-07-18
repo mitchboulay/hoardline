@@ -1,8 +1,83 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { api, type ConvertPlan } from '../api'
 import { Ic, type IconName } from '../icons'
 import { useStore } from '../store'
 
 const icon = (name: string) => Ic[(name in Ic ? name : 'film') as IconName]
+
+const smallSelect = {
+  background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)',
+  borderRadius: 8, padding: '8px 10px', fontSize: 13, outline: 'none', width: '100%',
+} as const
+
+function PostDownloadConversion() {
+  const profiles = useStore((s) => s.profiles)
+  const convertMode = useStore((s) => s.convertMode)
+  const setConvertMode = useStore((s) => s.setConvertMode)
+  const convertProfileId = useStore((s) => s.convertProfileId)
+  const setConvertProfileId = useStore((s) => s.setConvertProfileId)
+  const convertRetention = useStore((s) => s.convertRetention)
+  const setConvertRetention = useStore((s) => s.setConvertRetention)
+  const [plan, setPlan] = useState<ConvertPlan | null>(null)
+
+  useEffect(() => {
+    if (convertMode === 'none') {
+      setPlan(null)
+      return
+    }
+    void api.get<ConvertPlan>(`/api/convert/plan?profile_id=${convertProfileId}`).then(setPlan).catch(() => setPlan(null))
+  }, [convertMode, convertProfileId])
+
+  return (
+    <div className="card" style={{ marginTop: 14, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: convertMode === 'none' ? 0 : 14 }}>
+        <span style={{ display: 'flex', width: 17, height: 17, color: 'var(--accent2)' }}>
+          <Ic.hq width={17} height={17} />
+        </span>
+        <span style={{ fontSize: 13.5, fontWeight: 600, flex: 1 }}>Post-download conversion</span>
+        <select
+          aria-label="Post-download conversion mode"
+          value={convertMode}
+          onChange={(e) => setConvertMode(e.target.value as typeof convertMode)}
+          style={{ ...smallSelect, width: 'auto' }}
+        >
+          <option value="none">No conversion</option>
+          <option value="when_needed">Convert only when needed</option>
+          <option value="always">Always convert</option>
+        </select>
+      </div>
+      {convertMode !== 'none' && (
+        <div style={{ animation: 'fadeup .2s both' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <label>
+              <span style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5 }}>Profile</span>
+              <select value={convertProfileId} onChange={(e) => setConvertProfileId(e.target.value)} style={smallSelect}>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id} disabled={!p.available}>
+                    {p.name}{p.available ? '' : ' (unavailable)'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5 }}>Downloaded original</span>
+              <select value={convertRetention} onChange={(e) => setConvertRetention(e.target.value as 'keep' | 'delete')} style={smallSelect}>
+                <option value="delete">Keep only the converted file</option>
+                <option value="keep">Keep both files</option>
+              </select>
+            </label>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10, lineHeight: 1.45 }}>
+            {convertMode === 'when_needed'
+              ? 'The download is inspected first: if it already matches the profile it\'s kept as-is; matching video in the wrong container is remuxed losslessly; otherwise it\'s transcoded.'
+              : plan?.explanation ?? 'The downloaded file is always re-encoded with this profile.'}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Quick() {
   const nav = useNavigate()
@@ -214,6 +289,8 @@ export default function Quick() {
               </div>
             </div>
           )}
+
+          <PostDownloadConversion />
 
           <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 18, padding: '14px 16px' }}>
             <span style={{ display: 'flex', width: 18, height: 18, color: 'var(--muted)' }}>

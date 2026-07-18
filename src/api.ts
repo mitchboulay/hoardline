@@ -47,9 +47,14 @@ export const api = {
 // ------------------------------------------------------------------- types
 
 export type JobStatus = 'queued' | 'downloading' | 'paused' | 'completed' | 'failed'
+export type JobKind = 'download' | 'convert'
+export type JobStage =
+  | 'queued' | 'inspecting' | 'downloading' | 'encoding' | 'verifying'
+  | 'moving' | 'completed' | 'failed' | 'paused' | ''
 
 export interface Job {
   id: number
+  kind: JobKind
   url: string
   title: string
   thumbnail: string | null
@@ -57,14 +62,106 @@ export interface Job {
   recipe_name: string
   res: string
   status: JobStatus
+  stage: JobStage
   progress: number
   speed: string
   eta: string
+  fps: string
+  worker: string | null
+  priority: number
   location_id: number
   dest_display: string
+  src_path: string | null
+  src_size: number
+  out_size: number
+  profile_id: string | null
+  profile_name: string | null
+  retention: string
+  convert_mode: string | null
+  est_temp_bytes: number
+  log: string
   error: string | null
   created_at: string
   updated_at: string
+}
+
+export interface ProfileSettings {
+  container: 'mp4' | 'mkv'
+  encoder: string
+  quality: number
+  max_height: number | null
+  framerate: 'source' | '60' | '30'
+  audio_codec: 'aac' | 'opus' | 'copy'
+  audio_bitrate: number | null
+  all_audio: boolean
+  subtitles: 'keep' | 'none'
+  crop: 'auto' | 'none'
+  deinterlace: boolean
+  tune: string | null
+}
+
+export interface ConversionProfile {
+  id: string
+  name: string
+  desc: string
+  builtin: boolean
+  available: boolean
+  settings: ProfileSettings
+}
+
+export interface Capabilities {
+  handbrake: boolean
+  handbrake_version: string | null
+  encoders: string[]
+  hw_encoders: string[]
+  ffprobe: boolean
+}
+
+export interface FileEntry {
+  name: string
+  path: string
+  size: number
+  size_str: string
+  mtime: number
+  is_video: boolean
+}
+
+export interface FileListing {
+  dirs: string[]
+  files: FileEntry[]
+}
+
+export interface Inspection {
+  deferred: boolean
+  container?: string
+  duration?: number
+  size?: number
+  vcodec?: string | null
+  width?: number | null
+  height?: number | null
+  acodec?: string | null
+  audio_streams?: number
+}
+
+export interface WatchedFolder {
+  id: number
+  location_id: number
+  location_name?: string
+  path: string
+  profile_id: string
+  profile_name?: string
+  out_location_id: number
+  out_location_name?: string
+  out_subdir: string
+  retention: string
+  move_subdir: string
+  enabled: number
+  last_scanned: string | null
+}
+
+export interface ConvertPlan {
+  action: 'copy' | 'remux' | 'transcode'
+  explanation: string
 }
 
 export interface Intent {

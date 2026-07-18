@@ -90,7 +90,57 @@ CREATE TABLE IF NOT EXISTS sub_seen (
   video_id TEXT NOT NULL,
   PRIMARY KEY (sub_id, video_id)
 );
+CREATE TABLE IF NOT EXISTS conversion_profiles (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  desc TEXT NOT NULL DEFAULT '',
+  settings TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS watched_folders (
+  id INTEGER PRIMARY KEY,
+  location_id INTEGER NOT NULL REFERENCES storage_locations(id),
+  path TEXT NOT NULL DEFAULT '',
+  profile_id TEXT NOT NULL,
+  out_location_id INTEGER NOT NULL REFERENCES storage_locations(id),
+  out_subdir TEXT NOT NULL DEFAULT 'converted',
+  retention TEXT NOT NULL DEFAULT 'keep' CHECK (retention IN ('keep', 'move', 'delete')),
+  move_subdir TEXT NOT NULL DEFAULT 'originals',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_scanned TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS wf_seen (
+  wf_id INTEGER NOT NULL REFERENCES watched_folders(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  PRIMARY KEY (wf_id, file_path)
+);
 """
+
+# Columns added to `jobs` after the initial release. Applied idempotently at
+# startup — SQLite has no ALTER IF NOT EXISTS.
+JOBS_MIGRATIONS: dict[str, str] = {
+    "kind": "TEXT NOT NULL DEFAULT 'download'",
+    "stage": "TEXT NOT NULL DEFAULT ''",
+    "fps": "TEXT NOT NULL DEFAULT '—'",
+    "worker": "TEXT",
+    "priority": "INTEGER NOT NULL DEFAULT 0",
+    "src_path": "TEXT",
+    "src_location_id": "INTEGER",
+    "src_size": "INTEGER NOT NULL DEFAULT 0",
+    "out_size": "INTEGER NOT NULL DEFAULT 0",
+    "src_meta": "TEXT",
+    "out_meta": "TEXT",
+    "profile_id": "TEXT",
+    "profile_name": "TEXT",
+    "out_location_id": "INTEGER",
+    "out_subdir": "TEXT",
+    "retention": "TEXT NOT NULL DEFAULT 'keep'",
+    "move_subdir": "TEXT",
+    "convert_mode": "TEXT",
+    "est_temp_bytes": "INTEGER NOT NULL DEFAULT 0",
+    "log": "TEXT NOT NULL DEFAULT ''",
+}
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "default_recipe": "universal",
@@ -158,6 +208,10 @@ def init_db() -> None:
     LOCAL_DOWNLOADS.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        for column, ddl in JOBS_MIGRATIONS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {ddl}")
 
     from . import auth  # deferred: auth imports db
 

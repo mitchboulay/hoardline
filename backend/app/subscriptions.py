@@ -64,3 +64,49 @@ async def checker_loop() -> None:
         except Exception:
             pass  # never kill the loop; next tick retries
         await asyncio.sleep(CHECK_INTERVAL)
+
+
+# ------------------------------------------------------------ watched folders
+
+WATCH_INTERVAL = 120
+
+
+def scan_watched_folder(wf_id: int, bootstrap: bool = False) -> int:
+    """Scan one watched folder; enqueue conversions for unseen video files.
+    First scan marks existing files seen without converting — enabling a
+    folder shouldn't re-encode a whole library."""
+    from . import handbrake, jobs, storage  # deferred: avoid import cycle
+
+    wf = db.query_one("SELECT * FROM watched_folders WHERE id = ?", (wf_id,))
+    if wf is None:
+        raise ValueError("Unknown watched folder")
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (wf["location_id"],))
+    listing = storage.list_dir(loc, wf["path"])
+    first_scan = bootstrap or not db.query_one("SELECT 1 FROM wf_seen WHERE wf_id = ?", (wf_id,))
+    queued = 0
+    for entry in listing["files"]:
+        if not handbrake.is_video_file(entry["name"]):
+            continue
+        rel = f"{wf['path'].strip('/')}/{entry['name']}".strip("/")
+        if db.query_one("SELECT 1 FROM wf_seen WHERE wf_id = ? AND file_path = ?", (wf_id, rel)):
+            continue
+        db.execute("INSERT OR IGNORE INTO wf_seen (wf_id, file_path) VALUES (?, ?)", (wf_id, rel))
+        if first_scan:
+            continue
+        jobs.enqueue_conversion(
+            src_location_id=wf["location_id"], src_path=rel, src_size=entry["size"],
+            profile_id=wf["profile_id"], out_location_id=wf["out_location_id"],
+            out_subdir=wf["out_subdir"], retention=wf["retention"], move_subdir=wf["move_subdir"])
+        queued += 1
+    db.execute("UPDATE watched_folders SET last_scanned = datetime('now') WHERE id = ?", (wf_id,))
+    return queued
+
+
+async def watched_loop() -> None:
+    while True:
+        try:
+            for wf in db.query("SELECT id FROM watched_folders WHERE enabled = 1"):
+                await asyncio.to_thread(scan_watched_folder, wf["id"])
+        except Exception:
+            pass  # never kill the loop; next tick retries
+        await asyncio.sleep(WATCH_INTERVAL)
