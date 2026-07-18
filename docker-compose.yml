@@ -1,0 +1,13 @@
+services:
+  mediaflow:
+    build: .
+    container_name: mediaflow
+    restart: unless-stopped
+    ports:
+      # Local default 8090; homelab Coolify sets HOST_PORT=18423 (bedrock pattern)
+      - "${HOST_PORT:-8090}:8000"
+    volumes:
+      - mediaflow-data:/data
+
+volumes:
+  mediaflow-data:

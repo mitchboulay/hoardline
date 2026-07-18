@@ -1,0 +1,22 @@
+# Stage 1: build the frontend
+FROM node:22-alpine AS ui
+WORKDIR /ui
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY index.html vite.config.ts tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+# Stage 2: runtime — Python + ffmpeg + yt-dlp + FastAPI serving API and UI
+FROM python:3.12-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/app ./backend/app
+COPY --from=ui /ui/dist ./static
+ENV MEDIAFLOW_DATA=/data
+EXPOSE 8000
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
