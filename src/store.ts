@@ -72,7 +72,7 @@ interface State {
   loadSubs: () => Promise<void>
   loadRecipes: () => Promise<void>
   loadSettings: () => Promise<void>
-  saveSettings: (patch: Partial<Settings>) => Promise<void>
+  saveSettings: (patch: Partial<Settings>) => Promise<boolean>
 
   // quick download flow
   url: string
@@ -205,8 +205,10 @@ export const useStore = create<State>((set, get) => {
       try {
         set({ settings: await api.put<Settings>('/api/settings', patch) })
         get().showToast('Settings saved')
+        return true
       } catch (e) {
         toastError(e)
+        return false
       }
     },
 

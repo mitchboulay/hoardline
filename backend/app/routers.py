@@ -321,13 +321,16 @@ async def check_now(sub_id: int):
 
 MUTABLE_SETTINGS = {"default_recipe", "concurrent_downloads", "notifications",
                     "sso_enabled", "sso_issuer", "sso_client_id", "sso_client_secret",
-                    "policy_delete_old", "policy_keep_recent", "policy_low_disk_warn"}
+                    "policy_delete_old", "policy_keep_recent", "policy_low_disk_warn",
+                    "cookies_txt"}
+MASKED = "•••••"
 
 
 @api.get("/settings")
 def get_settings():
     settings = {k: v for k, v in db.all_settings().items() if k in MUTABLE_SETTINGS}
-    settings["sso_client_secret"] = "•••••" if settings.get("sso_client_secret") else ""
+    for secret_key in ("sso_client_secret", "cookies_txt"):
+        settings[secret_key] = MASKED if settings.get(secret_key) else ""
     return settings
 
 
@@ -336,8 +339,13 @@ def put_settings(body: dict):
     for key, value in body.items():
         if key not in MUTABLE_SETTINGS:
             raise HTTPException(status_code=422, detail=f"Unknown setting: {key}")
-        if key == "sso_client_secret" and value == "•••••":
+        if key in ("sso_client_secret", "cookies_txt") and value == MASKED:
             continue  # masked placeholder round-tripped, keep stored value
+        if key == "cookies_txt" and value and "\t" not in value:
+            raise HTTPException(
+                status_code=422,
+                detail="That doesn't look like a cookies.txt export — use a browser "
+                       "extension like “Get cookies.txt LOCALLY” and paste the whole file.")
         if key == "concurrent_downloads":
             value = max(1, min(10, int(value)))
         db.set_setting(key, value)

@@ -190,4 +190,5 @@ export interface Settings {
   policy_delete_old: boolean
   policy_keep_recent: boolean
   policy_low_disk_warn: boolean
+  cookies_txt: string
 }

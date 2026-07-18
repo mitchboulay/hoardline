@@ -58,6 +58,66 @@ function ChangePasswordCard() {
   )
 }
 
+function CookiesCard() {
+  const settings = useStore((s) => s.settings)
+  const saveSettings = useStore((s) => s.saveSettings)
+  const [text, setText] = useState('')
+  const saved = settings?.cookies_txt === '•••••'
+
+  return (
+    <div className="card" style={{ overflow: 'hidden', marginBottom: 16 }}>
+      <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', fontSize: 14.5, fontWeight: 600 }}>
+        YouTube cookies
+      </div>
+      <div style={{ padding: '18px 20px' }}>
+        <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+          Unlocks age-restricted videos and ones where the owner disabled playback outside YouTube.
+          On youtube.com while signed in, export cookies with a browser extension such as
+          “Get cookies.txt LOCALLY”, then paste the whole file here.
+        </p>
+        {saved && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--green)', marginBottom: 12 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)' }} />
+            Cookies are saved — downloads use them automatically.
+          </div>
+        )}
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={saved ? 'Paste new cookies here to replace the saved ones…' : '# Netscape HTTP Cookie File…'}
+          aria-label="YouTube cookies"
+          rows={5}
+          spellCheck={false}
+          style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '10px 12px', fontSize: 12, fontFamily: 'ui-monospace, monospace', outline: 'none', resize: 'vertical' }}
+        />
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12 }}>
+          {saved && (
+            <button
+              onClick={() => {
+                setText('')
+                void saveSettings({ cookies_txt: '' })
+              }}
+              style={{ padding: '9px 16px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--red)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Clear cookies
+            </button>
+          )}
+          <button
+            className="btn-primary"
+            disabled={!text.trim()}
+            style={{ opacity: text.trim() ? 1 : 0.6 }}
+            onClick={() => {
+              void saveSettings({ cookies_txt: text }).then((ok) => ok && setText(''))
+            }}
+          >
+            Save cookies
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SsoCard() {
   const settings = useStore((s) => s.settings)
   const saveSettings = useStore((s) => s.saveSettings)
@@ -214,6 +274,8 @@ export default function Settings() {
           </label>
         </Row>
       </div>
+
+      <CookiesCard />
 
       <div className="card" style={{ overflow: 'hidden', marginBottom: 16 }}>
         <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', fontSize: 14.5, fontWeight: 600 }}>

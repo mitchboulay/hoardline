@@ -136,6 +136,7 @@ def _run_job(job: dict) -> None:
         "continuedl": True,
         "retries": 10,
         "fragment_retries": 10,
+        **ytdlp_svc.cookie_opts(),
     })
 
     try:

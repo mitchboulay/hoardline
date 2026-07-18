@@ -103,6 +103,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "policy_delete_old": False,
     "policy_keep_recent": False,
     "policy_low_disk_warn": True,
+    "cookies_txt": "",
 }
 
 

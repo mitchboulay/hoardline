@@ -5,7 +5,20 @@ from typing import Any
 
 import yt_dlp
 
-from . import recipes
+from . import db, recipes
+
+
+def cookie_opts() -> dict[str, str]:
+    """yt-dlp cookiefile option from the cookies_txt setting. The file is
+    rewritten only when the setting changes; cleared setting removes it."""
+    text = (db.get_setting("cookies_txt") or "").strip()
+    path = db.DATA_DIR / "cookies.txt"
+    if not text:
+        path.unlink(missing_ok=True)
+        return {}
+    if not path.exists() or path.read_text() != text + "\n":
+        path.write_text(text + "\n")
+    return {"cookiefile": str(path)}
 
 
 def humanize_error(e: Exception) -> str:
@@ -48,6 +61,7 @@ def analyze_sync(url: str) -> dict[str, Any]:
         "skip_download": True,
         "extract_flat": "in_playlist",
         "playlist_items": "1-200",
+        **cookie_opts(),
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

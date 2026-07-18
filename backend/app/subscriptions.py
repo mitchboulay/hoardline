@@ -5,7 +5,7 @@ import time
 
 import yt_dlp
 
-from . import db, jobs
+from . import db, jobs, ytdlp_svc
 
 FREQ_SECONDS = {"hourly": 3600, "every 6 hours": 6 * 3600, "daily": 24 * 3600, "weekly": 7 * 24 * 3600}
 CHECK_INTERVAL = 300  # how often the loop wakes to see if any sub is due
@@ -13,7 +13,8 @@ MAX_NEW_PER_CHECK = 10
 
 
 def _latest_entries(url: str) -> list[dict]:
-    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "playlist_items": f"1-{MAX_NEW_PER_CHECK}"}
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True,
+            "playlist_items": f"1-{MAX_NEW_PER_CHECK}", **ytdlp_svc.cookie_opts()}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return list(info.get("entries") or [])
