@@ -15,6 +15,8 @@ def humanize_error(e: Exception) -> str:
         return "This website currently requires authentication. Add cookies in Settings."
     if "age" in lowered and "restrict" in lowered:
         return "This video is age-restricted and needs authentication to download."
+    if "playback on other websites has been disabled" in lowered:
+        return "The video owner has disabled playback outside YouTube, so it can't be downloaded."
     if "video unavailable" in lowered or "private video" in lowered:
         return "This video isn't available — it may be private or removed."
     if "unsupported url" in lowered:
