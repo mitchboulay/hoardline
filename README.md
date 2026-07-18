@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo/hoardline-logo-512.png" alt="Hoardline" width="360" />
+</p>
+
 # Hoardline
 
 **A self-hosted media downloader and converter that never makes you learn a flag.**
