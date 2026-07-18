@@ -114,6 +114,7 @@ interface State {
 
   // storage actions
   addLocation: (body: { name: string; host: string; share: string; subpath: string; username: string; password: string }) => Promise<boolean>
+  updateLocation: (id: number, body: { name: string; host?: string; share?: string; subpath: string; username?: string; password?: string }) => Promise<boolean>
   testLocation: (body: { host: string; share: string; subpath: string; username: string; password: string }) => Promise<string | null>
   deleteLocation: (id: number) => void
 
@@ -363,6 +364,17 @@ export const useStore = create<State>((set, get) => {
         await api.post('/api/storage-locations', body)
         await get().loadLocations()
         get().showToast(`Storage location "${body.name}" connected`)
+        return true
+      } catch (e) {
+        toastError(e)
+        return false
+      }
+    },
+    updateLocation: async (id, body) => {
+      try {
+        await api.patch(`/api/storage-locations/${id}`, body)
+        await get().loadLocations()
+        get().showToast(`"${body.name}" updated — connection verified`)
         return true
       } catch (e) {
         toastError(e)

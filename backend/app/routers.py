@@ -497,6 +497,41 @@ async def create_location(body: StorageCreateBody):
     return _location_public(db.query_one("SELECT * FROM storage_locations WHERE id = ?", (loc_id,)))
 
 
+class StorageUpdateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    host: str | None = None
+    share: str | None = None
+    subpath: str = ""
+    username: str | None = None
+    password: str | None = None  # empty/None = keep the stored password
+
+
+@api.patch("/storage-locations/{loc_id}")
+async def update_location(loc_id: int, body: StorageUpdateBody):
+    loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (loc_id,))
+    if loc is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    subpath = body.subpath.strip("/")
+    if loc["type"] == "local":
+        db.execute("UPDATE storage_locations SET name = ?, subpath = ? WHERE id = ?",
+                   (body.name, subpath, loc_id))
+    else:
+        host = body.host or loc["host"]
+        share = body.share or loc["share"]
+        username = body.username or loc["username"]
+        password = body.password or loc["password"]
+        # The connection is verified with the new values BEFORE anything saves.
+        try:
+            await asyncio.to_thread(storage.test_connection, host, share, username, password, subpath)
+        except storage.StorageError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        db.execute(
+            "UPDATE storage_locations SET name = ?, host = ?, share = ?, subpath = ?, "
+            "username = ?, password = ? WHERE id = ?",
+            (body.name, host, share, subpath, username, password, loc_id))
+    return _location_public(db.query_one("SELECT * FROM storage_locations WHERE id = ?", (loc_id,)))
+
+
 @api.delete("/storage-locations/{loc_id}")
 def delete_location(loc_id: int):
     loc = db.query_one("SELECT * FROM storage_locations WHERE id = ?", (loc_id,))
