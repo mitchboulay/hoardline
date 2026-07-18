@@ -115,6 +115,14 @@ CREATE TABLE IF NOT EXISTS wf_seen (
   file_path TEXT NOT NULL,
   PRIMARY KEY (wf_id, file_path)
 );
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT
+);
 """
 
 # Columns added to `jobs` after the initial release. Applied idempotently at

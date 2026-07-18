@@ -50,8 +50,41 @@ async def sso_callback(request: Request, code: str, state: str):
 
 
 @api.post("/auth/change-password")
-def change_password(body: ChangePasswordBody, user: dict = Depends(auth.require_user)):
+def change_password(body: ChangePasswordBody, user: dict = Depends(auth.require_session)):
     auth.change_password(user, body.current_password, body.new_password)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- API keys
+# Managed only from a signed-in session — a leaked key can use the API but
+# can't mint, list, or revoke keys.
+
+class ApiKeyBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+@api.get("/keys")
+def list_api_keys(user: dict = Depends(auth.require_session)):
+    return db.query("SELECT id, name, prefix, created_at, last_used_at FROM api_keys ORDER BY id")
+
+
+@api.post("/keys")
+def create_api_key(body: ApiKeyBody, user: dict = Depends(auth.require_session)):
+    key, row = auth.create_api_key(body.name)
+    return {**row, "key": key}  # plaintext returned exactly once
+
+
+@api.patch("/keys/{key_id}")
+def rename_api_key(key_id: int, body: ApiKeyBody, user: dict = Depends(auth.require_session)):
+    if not db.query_one("SELECT 1 FROM api_keys WHERE id = ?", (key_id,)):
+        raise HTTPException(status_code=404, detail="Unknown key")
+    db.execute("UPDATE api_keys SET name = ? WHERE id = ?", (body.name, key_id))
+    return db.query_one("SELECT id, name, prefix, created_at, last_used_at FROM api_keys WHERE id = ?", (key_id,))
+
+
+@api.delete("/keys/{key_id}")
+def delete_api_key(key_id: int, user: dict = Depends(auth.require_session)):
+    db.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
     return {"ok": True}
 
 
@@ -210,11 +243,7 @@ events_router = APIRouter(prefix="/api", tags=["events"])
 
 @events_router.get("/events")
 async def job_events(token: str):
-    import jwt as _jwt
-    try:
-        _jwt.decode(token, auth._jwt_secret(), algorithms=["HS256"])
-    except _jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    auth.validate_token(token)  # session JWT or mf_ API key
 
     async def stream():
         last_fingerprint = None

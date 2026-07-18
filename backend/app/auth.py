@@ -46,16 +46,65 @@ def issue_token(user_id: int, username: str) -> str:
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 
-def require_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
-    if creds is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+API_KEY_PREFIX = "mf_"
+
+
+def hash_api_key(key: str) -> str:
+    # Keys are 192-bit random — a plain SHA-256 (no salt) is the standard,
+    # lookup-friendly way to store them.
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def create_api_key(name: str) -> tuple[str, dict]:
+    """Returns (plaintext_key, row). The plaintext is shown exactly once."""
+    key = API_KEY_PREFIX + secrets.token_hex(24)
+    key_id = db.execute(
+        "INSERT INTO api_keys (name, prefix, key_hash) VALUES (?, ?, ?)",
+        (name, key[:11], hash_api_key(key)))
+    return key, db.query_one("SELECT id, name, prefix, created_at, last_used_at FROM api_keys WHERE id = ?", (key_id,))
+
+
+def resolve_api_key(token: str) -> dict | None:
+    row = db.query_one("SELECT * FROM api_keys WHERE key_hash = ?", (hash_api_key(token),))
+    if row is None:
+        return None
+    # last_used bookkeeping, throttled to once a minute per key
+    db.execute(
+        "UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ? "
+        "AND (last_used_at IS NULL OR last_used_at < datetime('now', '-60 seconds'))",
+        (row["id"],))
+    user = db.query_one("SELECT * FROM users WHERE is_sso = 0 ORDER BY id LIMIT 1")
+    return {**user, "auth_via": "api_key", "api_key_name": row["name"]} if user else None
+
+
+def validate_token(token: str) -> dict:
+    """Shared by the Bearer/X-API-Key dependency and the SSE query param."""
+    if token.startswith(API_KEY_PREFIX):
+        user = resolve_api_key(token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return user
     try:
-        payload = jwt.decode(creds.credentials, _jwt_secret(), algorithms=["HS256"])
+        payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query_one("SELECT * FROM users WHERE id = ?", (int(payload["sub"]),))
     if user is None:
         raise HTTPException(status_code=401, detail="Unknown user")
+    return {**user, "auth_via": "session"}
+
+
+def require_user(request: Request, creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
+    token = creds.credentials if creds else request.headers.get("X-API-Key")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return validate_token(token)
+
+
+def require_session(user: dict = Depends(require_user)) -> dict:
+    """For key management: a stolen API key must not be able to mint or list keys."""
+    if user.get("auth_via") == "api_key":
+        raise HTTPException(status_code=403, detail="API keys can't manage API keys — use a signed-in session.")
     return user
 
 

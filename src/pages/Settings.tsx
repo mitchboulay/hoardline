@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ApiError } from '../api'
+import { api, ApiError, type ApiKey } from '../api'
 import { ACCENTS } from '../theme'
 import { useStore } from '../store'
 import { Field } from './Login'
@@ -114,6 +114,151 @@ function CookiesCard() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function ApiKeysCard() {
+  const showToast = useStore((s) => s.showToast)
+  const openConfirm = useStore((s) => s.openConfirm)
+  const closeConfirm = useStore((s) => s.closeConfirm)
+  const user = useStore((s) => s.user)
+  const [keys, setKeys] = useState<ApiKey[]>([])
+  const [newName, setNewName] = useState('')
+  const [createdKey, setCreatedKey] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = () => void api.get<ApiKey[]>('/api/keys').then(setKeys).catch(() => {})
+  useEffect(load, [])
+
+  if (user?.is_sso) return null
+
+  const create = async () => {
+    setBusy(true)
+    try {
+      const resp = await api.post<ApiKey & { key: string }>('/api/keys', { name: newName.trim() })
+      setCreatedKey(resp.key)
+      setNewName('')
+      load()
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : 'Could not create key', 'warn')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const rename = async () => {
+    if (!renaming) return
+    try {
+      await api.patch(`/api/keys/${renaming.id}`, { name: renaming.name.trim() })
+      setRenaming(null)
+      load()
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : 'Rename failed', 'warn')
+    }
+  }
+
+  const revoke = (k: ApiKey) => {
+    openConfirm({
+      title: 'Revoke this API key?',
+      body: `"${k.name}" (${k.prefix}…) stops working immediately. Anything using it will get 401s.`,
+      action: 'Revoke key',
+      onConfirm: () => {
+        closeConfirm()
+        void api.del(`/api/keys/${k.id}`).then(() => {
+          showToast('API key revoked', 'info')
+          load()
+        })
+      },
+    })
+  }
+
+  return (
+    <div className="card" style={{ overflow: 'hidden', marginBottom: 16 }}>
+      <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', fontSize: 14.5, fontWeight: 600 }}>
+        API keys
+      </div>
+      <div style={{ padding: '16px 20px', borderBottom: keys.length ? '1px solid var(--border)' : 'none' }}>
+        <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+          Authenticate API calls with <code style={{ background: 'var(--surface2)', padding: '1px 6px', borderRadius: 5 }}>Authorization: Bearer &lt;key&gt;</code> or{' '}
+          <code style={{ background: 'var(--surface2)', padding: '1px 6px', borderRadius: 5 }}>X-API-Key: &lt;key&gt;</code>.
+          Keys have full API access but can't manage other keys.
+        </p>
+        {createdKey && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--accent-soft)', border: '1px solid var(--accent)', borderRadius: 9, padding: '10px 12px', marginBottom: 12 }}>
+            <code style={{ fontSize: 12, flex: 1, wordBreak: 'break-all' }}>{createdKey}</code>
+            <button
+              className="btn-primary"
+              style={{ padding: '6px 12px', fontSize: 12 }}
+              onClick={() => {
+                void navigator.clipboard.writeText(createdKey).then(() => showToast('Key copied — store it safely'))
+                setCreatedKey(null)
+              }}
+            >
+              Copy &amp; dismiss
+            </button>
+          </div>
+        )}
+        {createdKey && (
+          <div style={{ fontSize: 11.5, color: 'var(--amber)', marginBottom: 12 }}>
+            This is the only time the full key is shown.
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && newName.trim() && void create()}
+            placeholder="Key name (e.g. homebridge, n8n)…"
+            aria-label="New API key name"
+            style={{ flex: 1, background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 12px', fontSize: 13.5, outline: 'none' }}
+          />
+          <button className="btn-primary" disabled={busy || !newName.trim()} style={{ opacity: newName.trim() ? 1 : 0.6 }} onClick={() => void create()}>
+            Create key
+          </button>
+        </div>
+      </div>
+      {keys.map((k) => (
+        <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {renaming?.id === k.id ? (
+              <input
+                autoFocus
+                value={renaming.name}
+                onChange={(e) => setRenaming({ id: k.id, name: e.target.value })}
+                onBlur={() => void rename()}
+                onKeyDown={(e) => e.key === 'Enter' && void rename()}
+                aria-label="Key name"
+                style={{ background: 'var(--surface2)', border: '1px solid var(--accent)', color: 'var(--text)', borderRadius: 7, padding: '4px 8px', fontSize: 13, outline: 'none' }}
+              />
+            ) : (
+              <button
+                onClick={() => setRenaming({ id: k.id, name: k.name })}
+                title="Rename"
+                style={{ background: 'none', border: 'none', color: 'var(--text)', fontSize: 13.5, fontWeight: 600, cursor: 'text', padding: 0 }}
+              >
+                {k.name}
+              </button>
+            )}
+            <div style={{ fontSize: 11.5, color: 'var(--faint)', marginTop: 2 }}>
+              <code>{k.prefix}…</code> · created {k.created_at.slice(0, 10)} ·{' '}
+              {k.last_used_at ? `last used ${k.last_used_at.slice(0, 16)} UTC` : 'never used'}
+            </div>
+          </div>
+          <button
+            onClick={() => revoke(k)}
+            style={{ fontSize: 12, fontWeight: 600, color: 'var(--red)', background: 'rgba(248,113,113,.12)', border: 'none', padding: '6px 11px', borderRadius: 7, cursor: 'pointer' }}
+          >
+            Revoke
+          </button>
+        </div>
+      ))}
+      {keys.length === 0 && !createdKey && (
+        <div style={{ padding: '14px 20px', fontSize: 12.5, color: 'var(--faint)' }}>
+          No API keys yet.
+        </div>
+      )}
     </div>
   )
 }
@@ -297,6 +442,8 @@ export default function Settings() {
         </div>
         <ChangePasswordCard />
       </div>
+
+      <ApiKeysCard />
 
       <SsoCard />
     </div>
