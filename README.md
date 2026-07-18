@@ -1,11 +1,11 @@
-# MediaFlow
+# Hoardline
 
 **A self-hosted media downloader and converter that never makes you learn a flag.**
 
-MediaFlow wraps [yt-dlp](https://github.com/yt-dlp/yt-dlp) and
+Hoardline wraps [yt-dlp](https://github.com/yt-dlp/yt-dlp) and
 [HandBrake](https://handbrake.fr/) in a clean web app: paste a link, pick the
 *outcome* you want ("plays anywhere", "smallest file", "archive original"),
-and MediaFlow chooses the right formats, codecs, and containers behind the
+and Hoardline chooses the right formats, codecs, and containers behind the
 scenes. One container, one SQLite file, no external services.
 
 <!-- screenshots: docs/screenshots/{quick.png,queue.png,convert.png} -->
@@ -47,24 +47,24 @@ scenes. One container, one SQLite file, no external services.
 ```yaml
 # docker-compose.yml
 services:
-  mediaflow:
-    image: ghcr.io/mitchboulay/mediaflow:latest
-    container_name: mediaflow
+  hoardline:
+    image: ghcr.io/mitchboulay/hoardline:latest
+    container_name: hoardline
     restart: unless-stopped
     ports:
       - "8090:8000"
     volumes:
-      - mediaflow-data:/data
+      - hoardline-data:/data
 
 volumes:
-  mediaflow-data:
+  hoardline-data:
 ```
 
 ```sh
 docker compose up -d
 ```
 
-Open `http://localhost:8090`, sign in with **admin / mediaflow** — you'll be
+Open `http://localhost:8090`, sign in with **admin / hoardline** — you'll be
 required to set a real password immediately. That's the whole install:
 yt-dlp, ffmpeg, HandBrakeCLI, and a JS runtime are baked into the image.
 
@@ -78,7 +78,7 @@ under `/data`. Environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `HOST_PORT` | `8090` | Host port the compose file publishes |
-| `MEDIAFLOW_DATA` | `/data` | Data directory inside the container |
+| `HOARDLINE_DATA` | `/data` | Data directory inside the container |
 
 **Storage locations** — Storage → Add location. SMB/CIFS shares are verified
 (auth + writability) before saving; credentials are stored in the app
@@ -100,23 +100,23 @@ Every UI action is a REST call under `/api` (OpenAPI at `/docs`).
 Authenticate with an API key from Settings → API keys:
 
 ```sh
-curl https://your-host/api/jobs -H "X-API-Key: mf_…"
+curl https://your-host/api/jobs -H "X-API-Key: hl_…"
 # or
-curl https://your-host/api/jobs -H "Authorization: Bearer mf_…"
+curl https://your-host/api/jobs -H "Authorization: Bearer hl_…"
 ```
 
-Live queue updates: `GET /api/events?token=mf_…` (SSE).
+Live queue updates: `GET /api/events?token=hl_…` (SSE).
 
 Keys have full API access except: managing keys, changing the password, and
 reading secrets — those require a browser session.
 
 ## MCP (AI assistants)
 
-MediaFlow ships an MCP server at `POST /mcp` (streamable HTTP, stateless).
+Hoardline ships an MCP server at `POST /mcp` (streamable HTTP, stateless).
 
 ```sh
-claude mcp add --transport http mediaflow https://your-host/mcp \
-  --header "Authorization: Bearer mf_…"
+claude mcp add --transport http hoardline https://your-host/mcp \
+  --header "Authorization: Bearer hl_…"
 ```
 
 Then ask your assistant things like *"download this playlist as audio"*,
@@ -137,7 +137,7 @@ reverse proxy. Notably:
 
 ## Legal
 
-MediaFlow is a frontend for tools you run on your own hardware. Download only
+Hoardline is a frontend for tools you run on your own hardware. Download only
 content you have the right to download, and respect the terms of the sites
 you use it with. The authors do not condone copyright infringement.
 
@@ -145,6 +145,6 @@ you use it with. The authors do not condone copyright infringement.
 
 MIT (see `LICENSE`). The Docker image bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 (Unlicense), [FFmpeg](https://ffmpeg.org/) (LGPL/GPL), and
-[HandBrakeCLI](https://handbrake.fr/) (GPLv2) — MediaFlow invokes them as
+[HandBrakeCLI](https://handbrake.fr/) (GPLv2) — Hoardline invokes them as
 separate processes; their licenses and sources are available at the linked
 projects and via the Debian packages in the image.

@@ -45,7 +45,7 @@ function AuthShell({ children }: { children: React.ReactNode }) {
           <div style={{ width: 38, height: 38, borderRadius: 11, background: 'linear-gradient(135deg,var(--accent),var(--accent2))', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 18px var(--accent-soft)' }}>
             <Ic.down width={20} height={20} stroke="#fff" strokeWidth={2.2} />
           </div>
-          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: '-0.02em' }}>MediaFlow</span>
+          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: '-0.02em' }}>Hoardline</span>
         </div>
         <div className="card" style={{ borderRadius: 14, padding: 24, boxShadow: 'var(--shadow)' }}>{children}</div>
       </div>

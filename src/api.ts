@@ -9,9 +9,9 @@ export class ApiError extends Error {
   }
 }
 
-export const getToken = () => localStorage.getItem('mf-token')
-export const setToken = (t: string) => localStorage.setItem('mf-token', t)
-export const clearToken = () => localStorage.removeItem('mf-token')
+export const getToken = () => localStorage.getItem('hl-token')
+export const setToken = (t: string) => localStorage.setItem('hl-token', t)
+export const clearToken = () => localStorage.removeItem('hl-token')
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {}

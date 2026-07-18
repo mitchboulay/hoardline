@@ -46,7 +46,8 @@ def issue_token(user_id: int, username: str) -> str:
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 
-API_KEY_PREFIX = "mf_"
+API_KEY_PREFIX = "hl_"
+API_KEY_PREFIXES = ("hl_", "mf_")  # mf_ = pre-rename keys, still honored
 
 
 def hash_api_key(key: str) -> str:
@@ -79,7 +80,7 @@ def resolve_api_key(token: str) -> dict | None:
 
 def validate_token(token: str) -> dict:
     """Shared by the Bearer/X-API-Key dependency and the SSE query param."""
-    if token.startswith(API_KEY_PREFIX):
+    if token.startswith(API_KEY_PREFIXES):
         user = resolve_api_key(token)
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
@@ -172,7 +173,7 @@ async def sso_authorize_url(request: Request) -> str:
 
 
 async def sso_exchange(request: Request, code: str, state: str) -> str:
-    """Exchange the auth code, upsert the user, return a MediaFlow JWT."""
+    """Exchange the auth code, upsert the user, return a Hoardline JWT."""
     try:
         jwt.decode(state, _jwt_secret(), algorithms=["HS256"])
     except jwt.PyJWTError:

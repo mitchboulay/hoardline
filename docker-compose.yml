@@ -1,13 +1,13 @@
 services:
-  mediaflow:
+  hoardline:
     build: .
-    container_name: mediaflow
+    container_name: hoardline
     restart: unless-stopped
     ports:
       # Override with HOST_PORT=<port> to publish on a different host port.
       - "${HOST_PORT:-8090}:8000"
     volumes:
-      - mediaflow-data:/data
+      - hoardline-data:/data
 
 volumes:
-  mediaflow-data:
+  hoardline-data:

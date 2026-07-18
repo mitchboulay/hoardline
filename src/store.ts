@@ -25,8 +25,8 @@ function applyThemeDom(theme: Theme, accent: Accent) {
   root.style.setProperty('--accent-soft', `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`)
 }
 
-const savedTheme: Theme = localStorage.getItem('mf-theme') === 'light' ? 'light' : 'dark'
-const savedAccent = ACCENTS.find((a) => a.h === localStorage.getItem('mf-accent')) ?? ACCENTS[0]
+const savedTheme: Theme = localStorage.getItem('hl-theme') === 'light' ? 'light' : 'dark'
+const savedAccent = ACCENTS.find((a) => a.h === localStorage.getItem('hl-accent')) ?? ACCENTS[0]
 applyThemeDom(savedTheme, savedAccent)
 
 interface State {
@@ -137,12 +137,12 @@ export const useStore = create<State>((set, get) => {
     theme: savedTheme,
     accent: savedAccent,
     setTheme: (theme) => {
-      localStorage.setItem('mf-theme', theme)
+      localStorage.setItem('hl-theme', theme)
       applyThemeDom(theme, get().accent)
       set({ theme })
     },
     setAccent: (accent) => {
-      localStorage.setItem('mf-accent', accent.h)
+      localStorage.setItem('hl-accent', accent.h)
       applyThemeDom(get().theme, accent)
       set({ accent })
     },

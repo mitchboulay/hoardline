@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) server over streamable HTTP, stateless.
 
-AI clients point at POST /mcp authenticated with a MediaFlow API key
-(`Authorization: Bearer mf_…` or `X-API-Key`). Every request is independent —
+AI clients point at POST /mcp authenticated with a Hoardline API key
+(`Authorization: Bearer hl_…` or `X-API-Key`). Every request is independent —
 no sessions, no server-initiated streams (GET returns 405), JSON responses
 per the streamable-HTTP transport. Tools call the same internals as the REST
 API, so an agent can report on the server and take real actions."""
@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, Response
 from . import auth, db, handbrake, jobs, recipes, storage, subscriptions, ytdlp_svc
 
 PROTOCOL_VERSIONS = {"2025-06-18", "2025-03-26", "2024-11-05"}
-SERVER_INFO = {"name": "mediaflow", "version": "1.0.0"}
+SERVER_INFO = {"name": "hoardline", "version": "1.0.0"}
 
 mcp_router = APIRouter()
 
@@ -490,7 +490,7 @@ async def mcp_endpoint(request: Request):
         token = authz.removeprefix("Bearer ").strip()
     token = token or request.headers.get("X-API-Key")
     if not token:
-        return JSONResponse({"error": "Authenticate with an API key: Authorization: Bearer mf_… or X-API-Key."},
+        return JSONResponse({"error": "Authenticate with an API key: Authorization: Bearer hl_… or X-API-Key."},
                             status_code=401)
     try:
         auth.validate_token(token)

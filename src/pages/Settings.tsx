@@ -305,7 +305,7 @@ function SsoCard() {
       </Row>
       <div style={{ padding: '18px 20px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 0 }}>
-          <Field label="Issuer URL (from your Authentik provider, e.g. https://auth.example.com/application/o/mediaflow)" value={issuer} onChange={setIssuer} />
+          <Field label="Issuer URL (from your Authentik provider, e.g. https://auth.example.com/application/o/hoardline)" value={issuer} onChange={setIssuer} />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Client ID" value={clientId} onChange={setClientId} />
             <Field label="Client secret" type="password" value={clientSecret} onChange={setClientSecret} />
@@ -350,7 +350,7 @@ export default function Settings() {
     <div className="page" style={{ maxWidth: 760 }}>
       <h1 className="page-title">Settings</h1>
       <p className="page-sub" style={{ marginBottom: 22 }}>
-        Configure MediaFlow for your server.
+        Configure Hoardline for your server.
       </p>
 
       <div className="card" style={{ overflow: 'hidden', marginBottom: 16 }}>

@@ -55,7 +55,7 @@ function Sidebar() {
           <Ic.down width={18} height={18} stroke="#fff" strokeWidth={2.2} />
         </div>
         <div className="hide-collapsed" style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.02em' }}>
-          MediaFlow
+          Hoardline
         </div>
       </div>
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

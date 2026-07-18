@@ -7,13 +7,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-DATA_DIR = Path(os.environ.get("MEDIAFLOW_DATA", "./data"))
-DB_PATH = DATA_DIR / "mediaflow.db"
+DATA_DIR = Path(os.environ.get("HOARDLINE_DATA") or os.environ.get("MEDIAFLOW_DATA") or "./data")
+DB_PATH = DATA_DIR / "hoardline.db"
+LEGACY_DB_PATH = DATA_DIR / "mediaflow.db"  # pre-rename installs
 SCRATCH_DIR = DATA_DIR / "scratch"
 LOCAL_DOWNLOADS = DATA_DIR / "downloads"
 
 DEFAULT_USERNAME = "admin"
-DEFAULT_PASSWORD = "mediaflow"
+DEFAULT_PASSWORD = "hoardline"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -219,6 +220,11 @@ def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     LOCAL_DOWNLOADS.mkdir(parents=True, exist_ok=True)
+    if LEGACY_DB_PATH.exists() and not DB_PATH.exists():  # MediaFlow → Hoardline rename
+        for suffix in ("", "-wal", "-shm"):
+            legacy = Path(str(LEGACY_DB_PATH) + suffix)
+            if legacy.exists():
+                legacy.rename(str(DB_PATH) + suffix)
     with connect() as conn:
         conn.execute("PRAGMA journal_mode=WAL")  # persistent; set while idle at startup
         conn.executescript(SCHEMA)

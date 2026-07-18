@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     watcher.cancel()
 
 
-app = FastAPI(title="MediaFlow", lifespan=lifespan)
+app = FastAPI(title="Hoardline", lifespan=lifespan)
 app.include_router(routers.public)
 app.include_router(routers.api)
 app.include_router(routers.events_router)

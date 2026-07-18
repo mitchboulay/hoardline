@@ -243,7 +243,7 @@ events_router = APIRouter(prefix="/api", tags=["events"])
 
 @events_router.get("/events")
 async def job_events(token: str):
-    auth.validate_token(token)  # session JWT or mf_ API key
+    auth.validate_token(token)  # session JWT or hl_/mf_ API key
 
     async def stream():
         last_fingerprint = None
