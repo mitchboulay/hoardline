@@ -111,7 +111,10 @@ def looks_like_playlist(url: str) -> bool:
 
 def playlist_entries_sync(url: str) -> list[dict[str, str]]:
     """Flat-extract a playlist into per-video entries (capped at PLAYLIST_MAX)."""
-    opts = {"quiet": True, "no_warnings": True, "extract_flat": True,
+    # in_playlist (not True): watch?v=X&list=Y URLs resolve via a nested
+    # url-result to the playlist tab — full-flat mode refuses to follow it
+    # and returns just the single video.
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
             "playlist_items": f"1-{PLAYLIST_MAX}", **cookie_opts()}
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
