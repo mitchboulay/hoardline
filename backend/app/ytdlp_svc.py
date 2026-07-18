@@ -102,5 +102,36 @@ async def analyze(url: str) -> dict[str, Any]:
     return await asyncio.to_thread(analyze_sync, url)
 
 
+PLAYLIST_MAX = 300
+
+
+def looks_like_playlist(url: str) -> bool:
+    return "list=" in url or "/playlist" in url
+
+
+def playlist_entries_sync(url: str) -> list[dict[str, str]]:
+    """Flat-extract a playlist into per-video entries (capped at PLAYLIST_MAX)."""
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True,
+            "playlist_items": f"1-{PLAYLIST_MAX}", **cookie_opts()}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        raise ValueError(humanize_error(e)) from e
+    if info.get("_type") != "playlist":
+        return []
+    entries = []
+    for e in info.get("entries") or []:
+        vid = e.get("id") or e.get("url")
+        if not vid:
+            continue
+        entries.append({
+            "url": e.get("url") or f"https://www.youtube.com/watch?v={vid}",
+            "title": e.get("title") or "",
+            "uploader": e.get("uploader") or e.get("channel") or info.get("uploader") or "",
+        })
+    return entries
+
+
 def version() -> str:
     return yt_dlp.version.__version__

@@ -136,12 +136,24 @@ class JobBody(BaseModel):
 
 
 @api.post("/jobs")
-def create_job(body: JobBody):
+async def create_job(body: JobBody):
+    convert = body.convert.model_dump() if body.convert else None
     try:
+        # Playlist URLs fan out into one job per video — each gets its own
+        # progress, retries and {channel}/{title} destination.
+        if ytdlp_svc.looks_like_playlist(body.url):
+            entries = await asyncio.to_thread(ytdlp_svc.playlist_entries_sync, body.url)
+            if len(entries) > 1:
+                for entry in entries:
+                    jobs.enqueue(entry["url"], body.recipe_id, body.location_id,
+                                 title=entry["title"], overrides=body.overrides, convert=convert,
+                                 uploader=entry["uploader"], start_paused=body.start_paused)
+                return {"playlist": True, "created": len(entries),
+                        "capped": len(entries) >= ytdlp_svc.PLAYLIST_MAX}
         job_id = jobs.enqueue(body.url, body.recipe_id, body.location_id,
                               body.title, body.thumbnail, body.overrides,
-                              convert=body.convert.model_dump() if body.convert else None,
-                              uploader=body.uploader, start_paused=body.start_paused)
+                              convert=convert, uploader=body.uploader,
+                              start_paused=body.start_paused)
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     return db.query_one("SELECT * FROM jobs WHERE id = ?", (job_id,))

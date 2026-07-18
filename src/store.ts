@@ -287,7 +287,7 @@ export const useStore = create<State>((set, get) => {
         return false
       }
       try {
-        await api.post('/api/jobs', {
+        const resp = await api.post<{ playlist?: boolean; created?: number; capped?: boolean }>('/api/jobs', {
           url: analysis.url,
           recipe_id: selectedIntent,
           location_id: locationId,
@@ -302,9 +302,15 @@ export const useStore = create<State>((set, get) => {
         })
         const name = analysis.intents.find((i) => i.id === selectedIntent)?.name ?? selectedIntent
         set({ url: '', analysis: null, showAdvanced: false, advChoices: {} })
-        get().showToast(startPaused
-          ? `Queued (paused) — "${name}". Resume it from the queue whenever you're ready.`
-          : `Added to queue — "${name}"`)
+        if (resp.playlist) {
+          get().showToast(
+            `Queued ${resp.created} videos from the playlist${resp.capped ? ' (first 300)' : ''}` +
+            (startPaused ? ' — paused until you resume them' : ''))
+        } else {
+          get().showToast(startPaused
+            ? `Queued (paused) — "${name}". Resume it from the queue whenever you're ready.`
+            : `Added to queue — "${name}"`)
+        }
         void get().loadJobs()
         return true
       } catch (e) {
