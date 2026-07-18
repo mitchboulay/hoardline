@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, jobs, routers, subscriptions
+from . import db, jobs, mcp, routers, subscriptions
 
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 
@@ -26,6 +26,7 @@ app = FastAPI(title="MediaFlow", lifespan=lifespan)
 app.include_router(routers.public)
 app.include_router(routers.api)
 app.include_router(routers.events_router)
+app.include_router(mcp.mcp_router)
 
 
 @app.get("/api/health")

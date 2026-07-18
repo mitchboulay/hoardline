@@ -184,6 +184,9 @@ function ApiKeysCard() {
           Authenticate API calls with <code style={{ background: 'var(--surface2)', padding: '1px 6px', borderRadius: 5 }}>Authorization: Bearer &lt;key&gt;</code> or{' '}
           <code style={{ background: 'var(--surface2)', padding: '1px 6px', borderRadius: 5 }}>X-API-Key: &lt;key&gt;</code>.
           Keys have full API access but can't manage other keys.
+          AI assistants can connect via <strong>MCP</strong>: point the client at{' '}
+          <code style={{ background: 'var(--surface2)', padding: '1px 6px', borderRadius: 5 }}>{location.origin}/mcp</code>{' '}
+          with a key as the Bearer token — it can then report on and operate the server (downloads, conversions, queue, subscriptions).
         </p>
         {createdKey && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--accent-soft)', border: '1px solid var(--accent)', borderRadius: 9, padding: '10px 12px', marginBottom: 12 }}>
