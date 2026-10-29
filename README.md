@@ -64,31 +64,18 @@ scenes. One container, one SQLite file, no external services.
 
 ## Quickstart
 
-```yaml
-# docker-compose.yml
-services:
-  hoardline:
-    image: ghcr.io/mitchboulay/hoardline:latest
-    container_name: hoardline
-    restart: unless-stopped
-    ports:
-      - "8090:8000"
-    volumes:
-      - hoardline-data:/data
-
-volumes:
-  hoardline-data:
-```
-
 ```sh
-docker compose up -d
+git clone https://github.com/mitchboulay/hoardline.git
+cd hoardline
+docker compose up -d --build
 ```
 
 Open `http://localhost:8090`, sign in with **admin / hoardline** — you'll be
 required to set a real password immediately. That's the whole install:
 yt-dlp, ffmpeg, HandBrakeCLI, and a JS runtime are baked into the image.
 
-Or build from source: clone the repo and `docker compose up -d --build`.
+Prebuilt images are no longer published; build from source as above. (The last
+`ghcr.io/mitchboulay/hoardline` images stay up but won't receive updates.)
 
 ## Configuration
 
